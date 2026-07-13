@@ -1,0 +1,8 @@
+name = "replace-with-worker-name"
+compatibility_date = "2026-04-26"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "replace-with-local-or-staging-database-name"
+database_id = "replace-with-local-or-staging-database-id"
