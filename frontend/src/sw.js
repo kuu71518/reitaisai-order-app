@@ -1,4 +1,7 @@
 import { cleanupOutdatedCaches, precacheAndRoute } from 'workbox-precaching'
+import { registerLegacyServiceWorkerMigration } from './lib/legacyServiceWorkerMigration.js'
+
+registerLegacyServiceWorkerMigration()
 
 cleanupOutdatedCaches()
 precacheAndRoute(self.__WB_MANIFEST)
