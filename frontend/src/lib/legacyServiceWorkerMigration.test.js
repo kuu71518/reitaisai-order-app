@@ -49,8 +49,10 @@ function createHarness({ cacheStorage, calls }) {
   const windowClients = [
     {
       url: 'https://uchiage.touhoudaienkai.com/',
-      async navigate(url) {
+      navigate(url) {
         calls.push(['navigate', url])
+        // A real navigation cannot complete until the activate event finishes.
+        return new Promise(() => {})
       },
     },
   ]

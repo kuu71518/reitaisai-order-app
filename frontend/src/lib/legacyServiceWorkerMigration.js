@@ -45,9 +45,11 @@ export function registerLegacyServiceWorkerMigration({
       })
       await cacheStorage.delete(LEGACY_MIGRATION_CACHE)
 
-      await Promise.allSettled(
-        windowClients.map((client) => client.navigate(client.url)),
-      )
+      // Activation must finish before these navigations can complete.
+      // Start them without extending the activate event to avoid a deadlock.
+      windowClients.forEach((client) => {
+        client.navigate(client.url).catch(() => undefined)
+      })
     })())
   })
 }
