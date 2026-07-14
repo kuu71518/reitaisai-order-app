@@ -25,6 +25,10 @@ export default function Summary({ currentUser }) {
         )}
       />
 
+      <StatusNotice tone="warning" title="22時以降の深夜料金は合計に含まれません">
+        22時以降の注文には、店舗で10%が加算されます。最後の支払額は店員の伝票でも確認してください。
+      </StatusNotice>
+
       {isLoading ? (
         <LoadingState label="会計を集計しています" />
       ) : error ? (

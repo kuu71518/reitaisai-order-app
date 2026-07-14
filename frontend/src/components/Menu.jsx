@@ -240,6 +240,10 @@ export default function Menu({ currentUser }) {
 
       {view !== 'history' && renderOrderSteps()}
 
+      <StatusNotice tone="warning" title="22時以降は店で10%加算されます">
+        アプリの表示価格と合計は通常時間の金額です。22時以降の注文は、会計時に店舗の深夜料金10%が加算されます。
+      </StatusNotice>
+
       {feedback && (
         <StatusNotice tone={feedback.tone} title={feedback.title} live action={(
           <button type="button" className="notice-close" onClick={() => setFeedback(null)} aria-label="お知らせを閉じる">×</button>
