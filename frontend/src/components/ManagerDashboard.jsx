@@ -1,328 +1,277 @@
-import React, { useState, useEffect } from 'react';
+import { useMemo, useState } from 'react';
+import { apiRequest, getErrorMessage } from '../lib/api';
+import { formatTime } from '../lib/format';
+import { EmptyState, LoadingState, ScreenIntro, StatusNotice } from './States';
 
-const API_URL = import.meta.env.VITE_API_URL;
+export default function ManagerDashboard({
+  currentUser,
+  orders,
+  ordersError,
+  isLoading,
+  isRefreshing,
+  lastUpdated,
+  refreshOrders,
+}) {
+  const [quantityDrafts, setQuantityDrafts] = useState({});
+  const [busyOrderId, setBusyOrderId] = useState(null);
+  const [isCompleting, setIsCompleting] = useState(false);
+  const [feedback, setFeedback] = useState(null);
 
-export default function ManagerDashboard({ currentUser }) {
-  const [orders, setOrders] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
-
-  // フリー項目追加用の状態（State）
-  const [groupUsers, setGroupUsers] = useState([]);
-  const [customUserId, setCustomUserId] = useState('');
-  const [customName, setCustomName] = useState('');
-  const [customPrice, setCustomPrice] = useState('');
-  const [isAddingCustom, setIsAddingCustom] = useState(false);
-
-  // 🌟 追加：新規メンバー追加用の状態（State）
-  const [newMemberName, setNewMemberName] = useState('');
-  const [newMemberDiscordId, setNewMemberDiscordId] = useState('');
-  const [isAddingMember, setIsAddingMember] = useState(false);
-
-  const fetchOrders = async () => {
-    try {
-      const res = await fetch(`${API_URL}/api/orders?status=pending&group_id=${currentUser.group_id}`);
-      const json = await res.json();
-      if (json.success) setOrders(json.data || []);
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  // 同じグループのメンバー一覧を取得する処理
-  const fetchGroupUsers = async () => {
-    try {
-      const res = await fetch(`${API_URL}/api/admin/users`);
-      const json = await res.json();
-      if (json.success) {
-        // 自分の担当グループのメンバーだけに絞り込む
-        const members = json.data.filter(u => u.group_id === currentUser.group_id);
-        setGroupUsers(members);
-        // 初期値が空、または選択中メンバーがリストにない場合は先頭をセット
-        if (members.length > 0) {
-          setCustomUserId(members[0].id);
-        }
+  const groupedOrders = useMemo(() => {
+    const groups = new Map();
+    orders.forEach((order) => {
+      const key = `${order.menu_name}::${order.size}`;
+      if (!groups.has(key)) {
+        groups.set(key, {
+          key,
+          menuName: order.menu_name,
+          size: order.size,
+          total: 0,
+          items: [],
+        });
       }
-    } catch (e) { console.error(e); }
+      const group = groups.get(key);
+      group.total += Number(quantityDrafts[order.id] ?? order.quantity);
+      group.items.push(order);
+    });
+    return [...groups.values()];
+  }, [orders, quantityDrafts]);
+
+  const hasUnsavedQuantityDrafts = useMemo(() => orders.some((order) => (
+    Object.prototype.hasOwnProperty.call(quantityDrafts, order.id)
+      && Number(quantityDrafts[order.id]) !== Number(order.quantity)
+  )), [orders, quantityDrafts]);
+
+  const showFeedback = (tone, title, message) => setFeedback({ tone, title, message });
+
+  const changeQuantityDraft = (order, delta) => {
+    setQuantityDrafts((drafts) => {
+      const current = Number(drafts[order.id] ?? order.quantity);
+      const nextQuantity = Math.max(1, Math.min(20, current + delta));
+      const nextDrafts = { ...drafts };
+      if (nextQuantity === Number(order.quantity)) delete nextDrafts[order.id];
+      else nextDrafts[order.id] = nextQuantity;
+      return nextDrafts;
+    });
   };
 
-  useEffect(() => {
-    setIsLoading(true);
-    fetchOrders().finally(() => setIsLoading(false));
-    fetchGroupUsers(); // メンバー一覧も最初に取得
-    const interval = setInterval(fetchOrders, 5000); // 5秒ごとに自動更新
-    return () => clearInterval(interval);
-  }, [currentUser.group_id]);
+  const saveQuantity = async (order) => {
+    if (busyOrderId !== null || isCompleting) return;
+    const quantity = Number(quantityDrafts[order.id] ?? order.quantity);
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 20) {
+      showFeedback('danger', '個数を保存できません', '個数は1～20の整数にしてください。');
+      return;
+    }
 
-  // 個数の変更（＋ / －）
-  const handleUpdateQuantity = async (id, currentQty, delta) => {
-    const newQty = currentQty + delta;
-    if (newQty <= 0) return;
-
-    setOrders(prev => prev.map(o => o.id === id ? { ...o, quantity: newQty } : o));
+    setBusyOrderId(order.id);
     try {
-      await fetch(`${API_URL}/api/orders/${id}/quantity`, {
+      await apiRequest(`/api/manager/orders/${order.id}/quantity`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ quantity: newQty })
+        body: { quantity },
       });
-    } catch (e) {
-      fetchOrders();
+      setQuantityDrafts((drafts) => {
+        const next = { ...drafts };
+        delete next[order.id];
+        return next;
+      });
+      showFeedback('success', '個数を保存しました', `${order.menu_name}を${quantity}個に変更しました。`);
+      await refreshOrders();
+    } catch (error) {
+      showFeedback('danger', '個数を保存できませんでした', getErrorMessage(error));
+    } finally {
+      setBusyOrderId(null);
     }
   };
 
-  // 注文の取消
-  const handleDeleteOrder = async (id, userName, itemName) => {
-    if (!window.confirm(`${userName}さんの「${itemName}」を取り消しますか？\n（会計からもマイナスされます）`)) return;
-    try {
-      const res = await fetch(`${API_URL}/api/orders/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        setOrders(prev => prev.filter(o => o.id !== id));
-      }
-    } catch (e) {
-      alert('取消に失敗しました');
-    }
-  };
+  const markAllAsOrdered = async () => {
+    if (orders.length === 0 || isCompleting || hasUnsavedQuantityDrafts) return;
+    const orderIds = orders.map((order) => order.id);
+    if (!window.confirm(`表示中の${orderIds.length}件を「店員へ伝達済み」にしますか？\nまだ伝えていない注文がないか確認してください。`)) return;
 
-  // 注文済みにする
-  const handleMarkAsOrdered = async () => {
-    if (orders.length === 0) return;
-    if (!window.confirm('店員さんに注文を伝え終わりましたか？\n（このリストから消去されます）')) return;
-    
-    const orderIds = orders.map(o => o.id);
+    setIsCompleting(true);
     try {
-      const res = await fetch(`${API_URL}/api/orders/status`, {
+      const payload = await apiRequest('/api/manager/orders/status', {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ order_ids: orderIds, status: 'ordered' })
+        body: { order_ids: orderIds, status: 'ordered' },
       });
-      if (res.ok) setOrders([]);
-    } catch (e) {
-      alert('エラーが発生しました');
-    }
-  };
-
-  // フリー項目を会計に追加する処理
-  const handleAddCustomOrder = async () => {
-    if (!customName || customPrice === '') return alert('項目名と金額を入力してください');
-    
-    const targetUser = groupUsers.find(u => String(u.id) === String(customUserId))?.name;
-
-    if (!window.confirm(`${targetUser} さんの会計に\n「${customName}」 (¥${customPrice}) \nを追加しますか？`)) return;
-
-    setIsAddingCustom(true);
-    try {
-      const res = await fetch(`${API_URL}/api/manager/custom-order`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: customUserId,
-          name: customName,
-          price: parseInt(customPrice, 10)
-        })
-      });
-      const data = await res.json();
-      if (data.success) {
-        alert('会計に追加しました！\n（※送信待ちリストには入らず、直接会計データに加算されます）');
-        setCustomName('');
-        setCustomPrice('');
-        fetchGroupUsers(); // 金額更新を反映させるために再取得
+      const updatedCount = Number(payload?.data?.updated_count || 0);
+      if (updatedCount === orderIds.length) {
+        showFeedback('success', `${updatedCount}件を注文済みにしました`, '新しい注文が届いていないか、一覧を更新します。');
       } else {
-        alert('追加に失敗しました: ' + (data.message || ''));
+        showFeedback('warning', `${updatedCount}件を注文済みにしました`, `${orderIds.length - updatedCount}件は、ほかの操作で状態が変わっていたため更新しませんでした。`);
       }
-    } catch (e) {
-      alert('通信エラーが発生しました');
+      setQuantityDrafts({});
+      await refreshOrders();
+    } catch (error) {
+      showFeedback('danger', '注文済みに変更できませんでした', getErrorMessage(error));
     } finally {
-      setIsAddingCustom(false);
+      setIsCompleting(false);
     }
   };
-
-  // 🌟 追加：自グループ限定のメンバー新規追加処理
-  const handleAddGroupMember = async () => {
-    if (!newMemberName || !newMemberDiscordId) return alert('名前とDiscord IDを入力してください');
-    setIsAddingMember(true);
-    try {
-      const res = await fetch(`${API_URL}/api/users`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: newMemberName,
-          group_id: currentUser.group_id, // 自分のグループに自動固定
-          role: 'member',                // 一般メンバーとして登録
-          discord_id: newMemberDiscordId.trim()
-        })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        alert(`🎉 ${newMemberName} さんを「${currentUser.group_id}」に追加しました！`);
-        setNewMemberName('');
-        setNewMemberDiscordId('');
-        await fetchGroupUsers(); // リストを再読込して、上の特別会計のプルダウンに即時追加する
-      } else {
-        alert(`❌ 追加に失敗しました: ${data.message || 'すでにIDが登録されている可能性があります'}`);
-      }
-    } catch (e) {
-      alert('❌ 通信エラーが発生しました');
-    } finally {
-      setIsAddingMember(false);
-    }
-  };
-
-  const groupedOrders = orders.reduce((acc, order) => {
-    const key = `${order.menu_name}_${order.size}`;
-    if (!acc[key]) {
-      acc[key] = { menu_name: order.menu_name, size: order.size, total: 0, items: [] };
-    }
-    acc[key].total += order.quantity;
-    acc[key].items.push(order);
-    return acc;
-  }, {});
 
   return (
-    <div className="space-y-6 pb-24 p-2 max-w-lg mx-auto">
-      
-      {/* 🛠️ 上部コントロールエリア（メンバー追加 & 特別会計） */}
-      <div className="grid grid-cols-1 gap-4">
-        
-        {/* 🌟 新設：自グループ専用 メンバー追加カード */}
-        <div className="bg-green-50 border-2 border-green-200 rounded-xl p-4 shadow-sm">
-          <h2 className="text-sm font-black text-green-800 mb-1 flex items-center">
-            <span className="text-lg mr-2">👤</span> 担当グループへのメンバー追加
-          </h2>
-          <p className="text-[10px] text-green-600 font-bold mb-3 leading-tight">
-            あなたの担当している「<span className="underline decoration-2 font-black text-green-700">{currentUser.group_id}</span>」に、その場で参加者を追加できます。
-          </p>
-          <div className="space-y-2">
-            <div className="grid grid-cols-2 gap-2">
-              <input 
-                type="text" 
-                placeholder="参加者の名前" 
-                className="border border-green-200 p-2 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-green-400" 
-                value={newMemberName} 
-                onChange={e => setNewMemberName(e.target.value)} 
-              />
-              <input 
-                type="text" 
-                placeholder="Discord ID" 
-                className="border border-green-200 p-2 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-green-400" 
-                value={newMemberDiscordId} 
-                onChange={e => setNewMemberDiscordId(e.target.value)} 
-              />
-            </div>
-            <button 
-              onClick={handleAddGroupMember} 
-              disabled={isAddingMember} 
-              className="w-full bg-green-600 text-white font-black py-2.5 rounded-lg text-xs shadow-sm active:scale-95 transition-all"
-            >
-              {isAddingMember ? '追加中...' : `このメンバーを ${currentUser.group_id} に追加`}
-            </button>
-          </div>
-        </div>
+    <section className="screen manager-screen">
+      <ScreenIntro
+        eyebrow={`${currentUser.group_id} 担当者`}
+        title="届いた注文をまとめる"
+        description="個数を確認し、店員へ伝えた後にまとめて「伝達済み」にします。"
+        action={(
+          <button type="button" className="secondary-button compact-button" onClick={() => refreshOrders()} disabled={isRefreshing}>
+            {isRefreshing ? '更新中…' : '今すぐ更新'}
+          </button>
+        )}
+      />
 
-        {/* 特別会計（フリー項目）の追加 */}
-        <div className="bg-indigo-50 border-2 border-indigo-200 rounded-xl p-4 shadow-sm">
-          <h2 className="text-sm font-black text-indigo-800 mb-2 flex items-center">
-            <span className="text-lg mr-2">✍️</span> 特別会計（フリー項目）の追加
-          </h2>
-          <p className="text-[10px] text-indigo-600 font-bold mb-3 leading-tight">
-            メニューにない備品代・特別注文などを、指定した人の会計に直接追加します。
-          </p>
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-indigo-700 whitespace-nowrap">対象者:</span>
-              <select 
-                className="flex-1 border border-indigo-200 p-2 rounded-lg text-sm font-bold bg-white focus:ring-indigo-500 outline-none" 
-                value={customUserId} 
-                onChange={e => setCustomUserId(e.target.value)}
-              >
-                {groupUsers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-              </select>
-            </div>
-            <div className="flex gap-2">
-              <input 
-                type="text" 
-                placeholder="項目名 (例: 持ち込み料)" 
-                className="flex-1 border p-2 rounded-lg text-sm outline-none bg-white" 
-                value={customName} 
-                onChange={e => setCustomName(e.target.value)} 
-              />
-              <div className="w-24 relative flex items-center">
-                <span className="absolute left-2 text-gray-500 font-bold text-sm">¥</span>
-                <input 
-                  type="number" 
-                  placeholder="金額" 
-                  className="w-full border py-2 pr-2 pl-6 rounded-lg text-sm font-black text-red-600 bg-white" 
-                  value={customPrice} 
-                  onChange={e => setCustomPrice(e.target.value)} 
-                />
-              </div>
-            </div>
-            <button 
-              onClick={handleAddCustomOrder} 
-              disabled={isAddingCustom} 
-              className="w-full bg-indigo-600 text-white font-black py-2.5 rounded-lg shadow-sm active:scale-95 transition-all text-xs"
-            >
-              {isAddingCustom ? '追加中...' : 'この人の会計に追加する'}
-            </button>
-          </div>
+      <div className="manager-status-row">
+        <div className="pending-count-card">
+          <span>店員へ伝える注文</span>
+          <strong>{orders.length}<small>件</small></strong>
         </div>
-
+        <div className="last-update-card">
+          <span>最終更新</span>
+          <strong>{lastUpdated ? formatTime(lastUpdated) : '未取得'}</strong>
+          <small>5秒ごとに自動更新</small>
+        </div>
       </div>
 
-      {/* 送信待ちの注文リスト */}
-      <div className="bg-white border rounded-xl p-4 shadow-sm">
-        <h2 className="text-lg font-black text-gray-800 mb-2 flex items-center">
-          <span className="text-xl mr-2">📋</span> 送信待ちの注文リスト
-        </h2>
-        <p className="text-xs text-gray-500 mb-4 font-bold border-b pb-3">
-          店員さんに伝える前に、個数の変更や間違った注文の取消ができます。
-        </p>
+      {feedback && (
+        <StatusNotice tone={feedback.tone} title={feedback.title} live action={(
+          <button type="button" className="notice-close" onClick={() => setFeedback(null)} aria-label="お知らせを閉じる">×</button>
+        )}>
+          {feedback.message}
+        </StatusNotice>
+      )}
+
+      {ordersError && orders.length > 0 && (
+        <StatusNotice tone="warning" title="最新情報へ更新できませんでした" action={(
+          <button type="button" className="small-button" onClick={() => refreshOrders()}>再読み込み</button>
+        )}>
+          直前の注文を残して表示しています。店員へ伝える前に再読み込みしてください。
+        </StatusNotice>
+      )}
+
+      <section className="manager-order-section" aria-labelledby="pending-orders-title">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">手順 1・2</p>
+            <h2 id="pending-orders-title">個数を確認して店員へ伝える</h2>
+          </div>
+        </div>
 
         {isLoading && orders.length === 0 ? (
-          <p className="text-center text-gray-400 py-8 font-bold">読み込み中...</p>
+          <LoadingState label="新しい注文を確認しています" />
+        ) : ordersError && orders.length === 0 ? (
+          <EmptyState
+            symbol="!"
+            title="注文一覧を読み込めませんでした"
+            description={getErrorMessage(ordersError, '通信状態を確認してください。')}
+            action={<button type="button" className="primary-button compact-button" onClick={() => refreshOrders()}>もう一度読み込む</button>}
+          />
         ) : orders.length === 0 ? (
-          <div className="text-center py-10 bg-gray-50 rounded-lg border border-dashed border-gray-300">
-            <span className="text-3xl opacity-30 block mb-2">🍻</span>
-            <p className="text-gray-400 font-bold">現在、新しい注文はありません</p>
-          </div>
+          <EmptyState
+            symbol="○"
+            title="現在、新しい注文はありません"
+            description="この画面は5秒ごとに自動更新されます。"
+          />
         ) : (
-          <div className="space-y-4">
-            {Object.values(groupedOrders).map(group => (
-              <div key={`${group.menu_name}_${group.size}`} className="border-2 border-gray-200 rounded-xl overflow-hidden shadow-sm">
-                
-                <div className="bg-gray-100 p-3 flex justify-between items-center border-b-2 border-gray-200">
-                  <div className="font-bold text-gray-800 text-sm">
-                    {group.menu_name} <span className="text-xs text-gray-500 font-normal">({group.size})</span>
+          <div className="manager-order-groups">
+            {groupedOrders.map((group) => (
+              <article key={group.key} className="manager-order-group">
+                <header>
+                  <div>
+                    <h3>{group.menuName}</h3>
+                    <span>{group.size}</span>
                   </div>
-                  <div className="text-sm font-black text-blue-700 bg-blue-100 px-3 py-1 rounded-full border border-blue-200">
-                    計 {group.total}
-                  </div>
-                </div>
-
-                <div className="bg-white divide-y divide-gray-100">
-                  {group.items.map(item => (
-                    <div key={item.id} className="p-3 flex justify-between items-center text-sm">
-                      <span className="font-bold text-gray-600 truncate w-24">{item.user_name}</span>
-                      
-                      <div className="flex items-center space-x-1">
-                        <button onClick={() => handleUpdateQuantity(item.id, item.quantity, -1)} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 font-bold hover:bg-gray-200 active:scale-90">－</button>
-                        <span className="w-6 text-center font-black text-gray-800">{item.quantity}</span>
-                        <button onClick={() => handleUpdateQuantity(item.id, item.quantity, 1)} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 font-bold hover:bg-gray-200 active:scale-90">＋</button>
-                        <button onClick={() => handleDeleteOrder(item.id, item.user_name, item.menu_name)} className="ml-3 px-3 py-1.5 bg-red-50 text-red-600 text-xs font-bold rounded-lg border border-red-100 hover:bg-red-100 active:scale-95">取消</button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+                  <strong>合計 {group.total}個</strong>
+                </header>
+                <ul>
+                  {group.items.map((order) => {
+                    const quantity = Number(quantityDrafts[order.id] ?? order.quantity);
+                    const changed = quantity !== Number(order.quantity);
+                    const isSaving = busyOrderId === order.id;
+                    const controlsBusy = busyOrderId !== null || isCompleting;
+                    return (
+                      <li key={order.id}>
+                        <strong className="order-person">{order.user_name}</strong>
+                        <div className="quantity-control" aria-label={`${order.user_name}の個数`}>
+                          <button type="button" onClick={() => changeQuantityDraft(order, -1)} aria-label={`${order.user_name}さんの${order.menu_name}を1つ減らす`} disabled={controlsBusy}>−</button>
+                          <output>{quantity}</output>
+                          <button type="button" onClick={() => changeQuantityDraft(order, 1)} aria-label={`${order.user_name}さんの${order.menu_name}を1つ増やす`} disabled={controlsBusy}>＋</button>
+                        </div>
+                        {changed ? (
+                          <button
+                            type="button"
+                            className="save-line-button"
+                            disabled={controlsBusy}
+                            onClick={() => saveQuantity(order)}
+                          >
+                            {isSaving ? '保存中…' : '個数を保存'}
+                          </button>
+                        ) : <span className="saved-label">保存済み</span>}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </article>
             ))}
-            
-            <div className="pt-6">
-              <button onClick={handleMarkAsOrdered} className="w-full bg-red-600 text-white font-black py-4 rounded-xl shadow-md active:scale-95 transition-transform text-lg">
-                店員さんに伝えたら押す
-              </button>
-            </div>
           </div>
         )}
-      </div>
-    </div>
+
+        {orders.length > 0 && (
+          <div className="complete-orders-panel">
+            <div>
+              <strong>店員へ伝え終わりましたか？</strong>
+              <span>表示中の{orders.length}件が注文待ち一覧から外れます。</span>
+              {hasUnsavedQuantityDrafts && (
+                <small id="complete-orders-disabled-reason" role="status">
+                  未保存の個数があります。すべての変更を保存してから伝達済みにしてください。
+                </small>
+              )}
+            </div>
+            <button
+              type="button"
+              className="primary-button"
+              onClick={markAllAsOrdered}
+              disabled={isCompleting || busyOrderId !== null || hasUnsavedQuantityDrafts}
+              aria-describedby={hasUnsavedQuantityDrafts ? 'complete-orders-disabled-reason' : undefined}
+            >
+              {isCompleting ? '変更しています…' : `${orders.length}件を伝達済みにする`}
+            </button>
+          </div>
+        )}
+
+        <StatusNotice tone="info" title="注文の取消は現在準備中です">
+          間違った注文は、管理者へ直接伝えてください。反応しない取消ボタンは表示していません。
+        </StatusNotice>
+      </section>
+
+      <section className="notification-card" aria-labelledby="notification-title">
+        <div>
+          <p className="eyebrow">お知らせ</p>
+          <h2 id="notification-title">新着注文の通知</h2>
+          <strong className="notification-state state-paused">安全確認中</strong>
+          <p>利用者と通知先を安全に結び付ける仕組みを準備しています。注文一覧は自動更新されます。</p>
+        </div>
+      </section>
+
+      <details className="advanced-actions">
+        <summary>
+          <span>その他の操作</span>
+          <small>安全な参加者API準備中</small>
+        </summary>
+        <div className="advanced-grid">
+          <section className="utility-card">
+            <div>
+              <p className="eyebrow">参加者管理</p>
+              <h2>安全な参加者API準備中</h2>
+              <p>
+                担当グループだけを安全に扱える仕組みが整うまで、参加者の追加と特別料金の登録を停止しています。
+                必要な変更は管理者へ連絡してください。
+              </p>
+            </div>
+          </section>
+        </div>
+      </details>
+    </section>
   );
 }

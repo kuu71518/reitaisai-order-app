@@ -1,296 +1,497 @@
-import React, { useState, useMemo, useEffect } from "react";
-import useSWR from "swr";
+import { useMemo, useState } from 'react';
+import useSWR from 'swr';
+import { apiFetcher, apiRequest, getErrorMessage } from '../lib/api';
+import { formatTime, formatYen, getOrderStatus, orderTotal } from '../lib/format';
+import { EmptyState, LoadingState, ScreenIntro, StatusNotice } from './States';
 
-const API_URL = import.meta.env.VITE_API_URL;
-const fetcher = (url) => fetch(url).then((res) => res.json());
+const EMPTY_ITEMS = [];
+const CATEGORY_PRIORITY = [
+  'ビール',
+  'サワー',
+  'ハイボール',
+  'ソフトドリンク',
+  '名物',
+  '串焼',
+  '揚物',
+  '一品',
+  '食事',
+];
+
+function createRequestId() {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return `order_${[...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+}
 
 export default function Menu({ currentUser }) {
-  const { data, error, isLoading } = useSWR(`${API_URL}/api/menu`, fetcher);
-
+  const [view, setView] = useState('menu');
   const [cart, setCart] = useState([]);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState("すべて");
-  const [selectedSizes, setSelectedSizes] = useState({});
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('すべて');
+  const [selectedVariations, setSelectedVariations] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [feedback, setFeedback] = useState(null);
 
-  const [activeTab, setActiveTab] = useState('menu');
-  const [history, setHistory] = useState([]);
+  const menuQuery = useSWR('/api/menu', apiFetcher, {
+    revalidateOnFocus: true,
+    keepPreviousData: true,
+  });
+  const historyQuery = useSWR(
+    view === 'history' ? '/api/orders/mine' : null,
+    apiFetcher,
+    { revalidateOnFocus: true, keepPreviousData: true },
+  );
 
-  const menuItems = data?.data || [];
+  const menuItems = menuQuery.data?.data || EMPTY_ITEMS;
+  const history = historyQuery.data?.data || EMPTY_ITEMS;
 
   const categories = useMemo(() => {
-    if (!menuItems.length) return ["すべて"];
-    const rawCats = [...new Set(menuItems.map((item) => item.category))];
-    const priority = ["ビール", "サワー", "ハイボール", "名物", "串焼", "おやじ応援団", "揚物", "一品", "食事"];
+    const available = [...new Set(menuItems.map((item) => item.category).filter(Boolean))];
     return [
-      "すべて",
-      ...priority.filter((p) => rawCats.includes(p)),
-      ...rawCats.filter((c) => !priority.includes(c)),
+      'すべて',
+      ...CATEGORY_PRIORITY.filter((category) => available.includes(category)),
+      ...available.filter((category) => !CATEGORY_PRIORITY.includes(category)).sort(),
     ];
   }, [menuItems]);
 
   const groupedItems = useMemo(() => {
-    const groups = {};
+    const groups = new Map();
     menuItems.forEach((item) => {
-      if (!groups[item.name]) {
-        groups[item.name] = { name: item.name, category: item.category, variations: [] };
+      const key = `${item.category || 'その他'}::${item.name}`;
+      if (!groups.has(key)) {
+        groups.set(key, {
+          key,
+          name: item.name,
+          category: item.category || 'その他',
+          variations: [],
+        });
       }
-      groups[item.name].variations.push(item);
+      groups.get(key).variations.push(item);
     });
 
-    let result = Object.values(groups);
-    if (selectedCategory !== "すべて") result = result.filter((g) => g.category === selectedCategory);
-    if (searchQuery) result = result.filter((g) => g.name.includes(searchQuery));
-
-    result.sort((a, b) => {
-      if (a.name === "キリン一番搾り（生）") return -1;
-      if (b.name === "キリン一番搾り（生）") return 1;
-      return 0;
-    });
-
-    return result;
+    const normalizedSearch = searchQuery.trim().toLocaleLowerCase('ja-JP');
+    return [...groups.values()]
+      .filter((group) => selectedCategory === 'すべて' || group.category === selectedCategory)
+      .filter((group) => !normalizedSearch || group.name.toLocaleLowerCase('ja-JP').includes(normalizedSearch))
+      .sort((left, right) => {
+        if (left.name === 'キリン一番搾り（生）') return -1;
+        if (right.name === 'キリン一番搾り（生）') return 1;
+        return left.name.localeCompare(right.name, 'ja-JP');
+      });
   }, [menuItems, searchQuery, selectedCategory]);
 
-  useMemo(() => {
-    const initialSizes = {};
-    groupedItems.forEach((group) => {
-      if (!selectedSizes[group.name]) {
-        initialSizes[group.name] = group.variations[0].id;
-      }
-    });
-    if (Object.keys(initialSizes).length > 0) {
-      setSelectedSizes((prev) => ({ ...prev, ...initialSizes }));
-    }
-  }, [groupedItems]);
+  const cartSummary = useMemo(() => ({
+    units: cart.reduce((sum, item) => sum + item.quantity, 0),
+    total: cart.reduce((sum, item) => sum + Number(item.price || 0) * item.quantity, 0),
+  }), [cart]);
 
-  useEffect(() => {
-    if (activeTab === 'history') fetchHistory();
-  }, [activeTab]);
+  const historyTotals = useMemo(() => history.reduce((totals, order) => {
+    const amount = orderTotal(order);
+    if (order.status === 'ordered') totals.confirmed += amount;
+    else if (order.status === 'pending') totals.pending += amount;
+    return totals;
+  }, { confirmed: 0, pending: 0 }), [history]);
 
-  const fetchHistory = async () => {
-    try {
-      const res = await fetch(`${API_URL}/api/users/${currentUser.id}/orders`);
-      const json = await res.json();
-      if (json.success) setHistory(json.data);
-    } catch (e) {
-      console.error("履歴取得エラー:", e);
-    }
-  };
-
-  const formatTime = (dateString) => {
-    if (!dateString) return '';
-    const d = new Date(dateString + 'Z');
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  };
-
-  // 🌟 追加：履歴から「合計金額」を計算する処理
-  const totalSpent = useMemo(() => {
-    return history.reduce((sum, order) => sum + (order.price * order.quantity), 0);
-  }, [history]);
-
-  const handleSizeChange = (groupName, sizeId) => {
-    setSelectedSizes((prev) => ({ ...prev, [groupName]: sizeId }));
+  const showFeedback = (tone, title, message) => {
+    setFeedback({ tone, title, message });
   };
 
   const addToCart = (group) => {
-    const selectedId = selectedSizes[group.name];
-    const selectedItem = group.variations.find((v) => v.id === parseInt(selectedId));
+    if (isSubmitting) return;
+    const selectedId = Number(selectedVariations[group.key] ?? group.variations[0]?.id);
+    const selectedItem = group.variations.find((variation) => Number(variation.id) === selectedId);
+    if (!selectedItem) {
+      showFeedback('danger', '商品を追加できませんでした', 'サイズを選び直して、もう一度お試しください。');
+      return;
+    }
 
-    setCart((prev) => {
-      const existing = prev.find((item) => item.menu_item_id === selectedItem.id);
+    setCart((current) => {
+      const existing = current.find((item) => item.menu_item_id === selectedItem.id);
       if (existing) {
-        return prev.map((item) => item.menu_item_id === selectedItem.id ? { ...item, quantity: item.quantity + 1 } : item);
+        return current.map((item) => (
+          item.menu_item_id === selectedItem.id && item.quantity < 20
+            ? { ...item, quantity: item.quantity + 1 }
+            : item
+        ));
       }
-      return [...prev, { ...selectedItem, menu_item_id: selectedItem.id, quantity: 1 }];
+      return [...current, {
+        ...selectedItem,
+        menu_item_id: selectedItem.id,
+        quantity: 1,
+        request_id: createRequestId(),
+      }];
     });
+    showFeedback('success', 'カートに追加しました', `${selectedItem.name}（${selectedItem.size}）`);
   };
 
-  const updateQuantity = (id, delta) => {
-    setCart((prev) =>
-      prev.map((item) => {
-        if (item.menu_item_id === id) {
-          const newQ = item.quantity + delta;
-          return newQ > 0 ? { ...item, quantity: newQ } : item;
-        }
-        return item;
-      })
-    );
+  const changeQuantity = (id, delta) => {
+    if (isSubmitting) return;
+    setCart((current) => current.flatMap((item) => {
+      if (item.menu_item_id !== id) return [item];
+      const quantity = item.quantity + delta;
+      if (quantity <= 0) return [];
+      return [{ ...item, quantity: Math.min(quantity, 20) }];
+    }));
   };
-
-  const removeFromCart = (id) => setCart((prev) => prev.filter((item) => item.menu_item_id !== id));
 
   const submitOrder = async () => {
-    if (!cart.length) return;
+    if (cart.length === 0 || isSubmitting) return;
+    const submittedItems = [...cart];
     setIsSubmitting(true);
-    try {
-      await Promise.all(
-        cart.map((item) =>
-          fetch(`${API_URL}/api/orders`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              user_id: currentUser.id,
-              menu_item_id: item.menu_item_id,
-              quantity: item.quantity,
-            }),
-          })
-        )
-      );
-      alert("注文を送信しました！");
-      setCart([]);
-      setActiveTab('history'); 
-    } catch (err) {
-      alert("送信に失敗しました。");
-    } finally {
-      setIsSubmitting(false);
+    setFeedback(null);
+
+    const results = await Promise.allSettled(submittedItems.map((item) => apiRequest('/api/orders', {
+      method: 'POST',
+      body: {
+        menu_item_id: item.menu_item_id,
+        quantity: item.quantity,
+        request_id: item.request_id,
+      },
+    })));
+
+    const successfulIds = new Set();
+    const failed = [];
+    results.forEach((result, index) => {
+      if (result.status === 'fulfilled') successfulIds.add(submittedItems[index].menu_item_id);
+      else failed.push(result.reason);
+    });
+
+    setCart((current) => current.filter((item) => !successfulIds.has(item.menu_item_id)));
+    setIsSubmitting(false);
+
+    if (failed.length === 0) {
+      showFeedback('success', '注文を送信しました', '担当者が内容を確認します。注文履歴で状態を確認できます。');
+      setView('history');
+      await historyQuery.mutate();
+      return;
     }
+
+    const successCount = successfulIds.size;
+    showFeedback(
+      successCount > 0 ? 'warning' : 'danger',
+      successCount > 0 ? `${successCount}件は送信、${failed.length}件は未送信です` : '注文を送信できませんでした',
+      `${getErrorMessage(failed[0], '通信状態を確認してください。')} 重複を防ぐため、注文履歴を確認してから残った商品を再送してください。`,
+    );
+    if (successCount > 0) await historyQuery.mutate();
   };
 
-  if (error) return <div className="p-4 text-center text-red-600 font-bold">エラーが発生しました。</div>;
-  if (isLoading) return <div className="p-4 text-center text-gray-500 font-bold">読み込み中...</div>;
+  const switchView = (nextView) => {
+    if (isSubmitting) return;
+    setFeedback(null);
+    setView(nextView);
+  };
+
+  const renderOrderSteps = () => (
+    <ol className="order-steps" aria-label="注文の手順">
+      {[
+        ['menu', '1', '選ぶ'],
+        ['review', '2', '確認'],
+        ['send', '3', '送る'],
+      ].map(([id, number, label]) => {
+        const isActive = isSubmitting ? id === 'send' : view === id;
+        const isComplete = (view === 'review' && id === 'menu') || (isSubmitting && id !== 'send');
+        return (
+          <li key={id} className={`${isActive ? 'is-active' : ''} ${isComplete ? 'is-complete' : ''}`.trim()}>
+            <span>{isComplete ? '✓' : number}</span>
+            <strong>{label}</strong>
+          </li>
+        );
+      })}
+    </ol>
+  );
+
+  if (menuQuery.isLoading && !menuQuery.data) return <LoadingState label="メニューを読み込んでいます" />;
+
+  if (menuQuery.error && !menuQuery.data) {
+    return (
+      <EmptyState
+        symbol="!"
+        title="メニューを読み込めませんでした"
+        description={getErrorMessage(menuQuery.error, '通信状態を確認してください。')}
+        action={<button type="button" className="primary-button compact-button" onClick={() => menuQuery.mutate()}>もう一度読み込む</button>}
+      />
+    );
+  }
 
   return (
-    <div className="space-y-4 pb-24 md:pb-8">
-      
-      <div className="flex bg-gray-200 p-1 rounded-xl shadow-inner mb-4">
-        <button 
-          onClick={() => setActiveTab('menu')} 
-          className={`flex-1 py-3 font-black text-sm rounded-lg transition-all ${activeTab === 'menu' ? 'bg-white text-red-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+    <section className="screen menu-screen">
+      <nav className="view-switch" aria-label="注文画面の切り替え">
+        <button
+          type="button"
+          aria-pressed={view !== 'history'}
+          className={view !== 'history' ? 'is-active' : ''}
+          onClick={() => switchView(cart.length > 0 && view === 'review' ? 'review' : 'menu')}
+          disabled={isSubmitting}
         >
-          🍽️ 注文する
+          注文する
+          {cartSummary.units > 0 && <span>{cartSummary.units}</span>}
         </button>
-        <button 
-          onClick={() => setActiveTab('history')} 
-          className={`flex-1 py-3 font-black text-sm rounded-lg transition-all ${activeTab === 'history' ? 'bg-white text-red-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+        <button
+          type="button"
+          aria-pressed={view === 'history'}
+          className={view === 'history' ? 'is-active' : ''}
+          onClick={() => switchView('history')}
+          disabled={isSubmitting}
         >
-          📜 自分の履歴
+          注文履歴
         </button>
-      </div>
+      </nav>
 
-      {activeTab === 'menu' && (
+      {view !== 'history' && renderOrderSteps()}
+
+      {feedback && (
+        <StatusNotice tone={feedback.tone} title={feedback.title} live action={(
+          <button type="button" className="notice-close" onClick={() => setFeedback(null)} aria-label="お知らせを閉じる">×</button>
+        )}>
+          {feedback.message}
+        </StatusNotice>
+      )}
+
+      {view === 'menu' && (
         <>
-          {cart.length > 0 && (
-            <div className="bg-white border-2 border-red-500 rounded-xl p-4 shadow-sm">
-              <div className="flex justify-between items-center mb-2 border-b pb-2">
-                <span className="font-bold text-red-600">カート ({cart.length})</span>
-                <span className="font-black text-lg">
-                  ¥{cart.reduce((s, i) => s + i.price * i.quantity, 0).toLocaleString()}
-                </span>
-              </div>
-              <ul className="space-y-3 max-h-48 overflow-y-auto mb-4">
-                {cart.map((item) => (
-                  <li key={item.menu_item_id} className="flex justify-between items-center text-sm border-b border-dashed border-gray-200 pb-2">
-                    <div className="flex-1 truncate pr-2">
-                      <div className="font-bold text-gray-800">{item.name}</div>
-                      <div className="text-gray-500 text-xs">({item.size}) ¥{item.price}</div>
-                    </div>
-                    <div className="flex items-center space-x-1">
-                      <button onClick={() => updateQuantity(item.menu_item_id, -1)} className="bg-gray-200 hover:bg-gray-300 w-8 h-8 rounded-full font-bold text-lg flex items-center justify-center">-</button>
-                      <span className="w-6 text-center font-bold">{item.quantity}</span>
-                      <button onClick={() => updateQuantity(item.menu_item_id, 1)} className="bg-gray-200 hover:bg-gray-300 w-8 h-8 rounded-full font-bold text-lg flex items-center justify-center">+</button>
-                      <button onClick={() => removeFromCart(item.menu_item_id)} className="text-red-400 hover:text-red-600 px-2 py-1 rounded ml-2 text-xl font-bold">✕</button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-              <button onClick={submitOrder} disabled={isSubmitting} className="w-full bg-red-600 hover:bg-red-700 text-white font-black py-4 rounded-xl shadow-md active:scale-95 transition-transform flex items-center justify-center">
-                {isSubmitting ? "送信中..." : "📱 担当者へ注文を送信する"}
-              </button>
-            </div>
-          )}
+          <ScreenIntro
+            eyebrow="手順 1"
+            title="料理・飲み物を選ぶ"
+            description="商品を選び、「カートに入れる」を押してください。送信はまだされません。"
+          />
 
-          <div className="bg-white p-3 rounded-xl shadow-sm border border-gray-100 space-y-3">
-            <input type="text" placeholder="🔍 メニュー名で検索..." className="w-full border border-gray-300 rounded-lg p-3 text-sm outline-none focus:ring-2 focus:ring-red-500" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
-            <div className="text-[10px] font-bold text-gray-400 mb-2 px-1 mt-2">カテゴリーから選ぶ</div>
-            <div className="flex flex-wrap gap-2">
-              {categories.map((cat) => (
-                <button key={cat} onClick={() => setSelectedCategory(cat)} className={`px-3 py-2 rounded-lg text-xs font-bold transition-all shadow-sm flex-1 min-w-[80px] text-center border ${selectedCategory === cat ? "bg-red-600 text-white border-red-600 ring-2 ring-red-100" : "bg-gray-50 text-gray-700 border-gray-100 hover:bg-gray-100"}`}>
-                  {cat}
+          <div className="catalog-tools">
+            <label className="search-field">
+              <span>メニューを検索</span>
+              <div>
+                <span aria-hidden="true">⌕</span>
+                <input
+                  type="search"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder="例：ビール、唐揚げ"
+                />
+                {searchQuery && <button type="button" onClick={() => setSearchQuery('')}>消す</button>}
+              </div>
+            </label>
+
+            <div className="category-strip" aria-label="カテゴリーで絞り込む">
+              {categories.map((category) => (
+                <button
+                  key={category}
+                  type="button"
+                  aria-pressed={selectedCategory === category}
+                  className={selectedCategory === category ? 'is-active' : ''}
+                  onClick={() => setSelectedCategory(category)}
+                >
+                  {category}
                 </button>
               ))}
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-3">
-            {groupedItems.map((group) => (
-              <div key={group.name} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
-                <div className="flex items-center gap-2 mb-3">
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${group.category === "お酒" ? "bg-orange-100 text-orange-700" : group.category === "ソフトドリンク" ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-600"}`}>
-                    {group.category}
-                  </span>
-                  <h3 className="font-bold text-gray-800">{group.name}</h3>
-                </div>
-                <div className="flex items-center">
-                  <select className="border border-gray-300 rounded-lg p-2 text-sm bg-gray-50 flex-1 mr-4 font-medium" value={selectedSizes[group.name] || ""} onChange={(e) => handleSizeChange(group.name, e.target.value)}>
-                    {group.variations.map((v) => (
-                      <option key={v.id} value={v.id}>{v.size} - ¥{v.price}</option>
-                    ))}
-                  </select>
-                  <button onClick={() => addToCart(group)} className="bg-blue-600 hover:bg-blue-700 text-white font-black text-xl w-12 h-12 rounded-full shadow-md active:scale-90 transition-transform">
-                    ＋
-                  </button>
-                </div>
-              </div>
-            ))}
-            {groupedItems.length === 0 && <p className="text-center text-gray-500 py-8 font-bold">メニューが見つかりませんでした。</p>}
+          {menuQuery.error && (
+            <StatusNotice tone="warning" title="最新情報へ更新できませんでした" action={(
+              <button type="button" className="small-button" onClick={() => menuQuery.mutate()}>再読み込み</button>
+            )}>
+              直前に読み込んだメニューを表示しています。
+            </StatusNotice>
+          )}
+
+          <div className="menu-grid">
+            {groupedItems.map((group) => {
+              const selectedId = Number(selectedVariations[group.key] ?? group.variations[0]?.id);
+              const selectedItem = group.variations.find((item) => Number(item.id) === selectedId) || group.variations[0];
+              return (
+                <article key={group.key} className="menu-card">
+                  <div className="menu-card-copy">
+                    <span className="category-label">{group.category}</span>
+                    <h2>{group.name}</h2>
+                  </div>
+                  <div className="menu-card-controls">
+                    {group.variations.length > 1 ? (
+                      <label>
+                        <span>サイズ・価格</span>
+                        <select
+                          value={selectedId}
+                          onChange={(event) => setSelectedVariations((current) => ({
+                            ...current,
+                            [group.key]: Number(event.target.value),
+                          }))}
+                        >
+                          {group.variations.map((variation) => (
+                            <option key={variation.id} value={variation.id}>
+                              {variation.size}・{formatYen(variation.price)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : (
+                      <div className="single-price">
+                        <span>{selectedItem?.size || '通常'}</span>
+                        <strong>{formatYen(selectedItem?.price)}</strong>
+                      </div>
+                    )}
+                    <button type="button" className="add-cart-button" onClick={() => addToCart(group)}>
+                      <span aria-hidden="true">＋</span> カートに入れる
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
           </div>
+
+          {groupedItems.length === 0 && (
+            <EmptyState
+              symbol="⌕"
+              title="当てはまるメニューがありません"
+              description="検索語を短くするか、カテゴリーを「すべて」に戻してください。"
+              action={<button type="button" className="secondary-button compact-button" onClick={() => { setSearchQuery(''); setSelectedCategory('すべて'); }}>絞り込みを戻す</button>}
+            />
+          )}
+
+          {cart.length > 0 && (
+            <div className="cart-dock" role="region" aria-label="カートの内容">
+              <div>
+                <span>{cartSummary.units}点を選択中</span>
+                <strong>{formatYen(cartSummary.total)}</strong>
+              </div>
+              <button type="button" onClick={() => switchView('review')}>内容を確認する</button>
+            </div>
+          )}
         </>
       )}
 
-      {/* --- 📜 自分の注文履歴タブ --- */}
-      {activeTab === 'history' && (
-        <div className="bg-white p-4 rounded-xl shadow-sm border">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="font-black text-lg text-gray-800">📜 自分の注文履歴</h2>
-            <button onClick={fetchHistory} className="text-xs bg-gray-100 px-3 py-2 rounded font-bold hover:bg-gray-200">↻ 更新</button>
+      {view === 'review' && (
+        <>
+          <ScreenIntro
+            eyebrow="手順 2"
+            title="注文内容を確認"
+            description="商品・サイズ・個数を確認してください。赤いボタンを押すまで送信されません。"
+            action={<button type="button" className="secondary-button compact-button" onClick={() => switchView('menu')} disabled={isSubmitting}>メニューへ戻る</button>}
+          />
+
+          <div className="order-ticket">
+            <div className="ticket-heading">
+              <div>
+                <span>注文する人</span>
+                <strong>{currentUser.name}</strong>
+              </div>
+              <div>
+                <span>送信先</span>
+                <strong>{currentUser.group_id}の担当者</strong>
+              </div>
+            </div>
+
+            <ul className="cart-list">
+              {cart.map((item) => (
+                <li key={item.menu_item_id}>
+                  <div className="cart-item-copy">
+                    <strong>{item.name}</strong>
+                    <span>{item.size}・1点 {formatYen(item.price)}</span>
+                  </div>
+                  <div className="quantity-control" aria-label={`${item.name}の個数`}>
+                    <button type="button" onClick={() => changeQuantity(item.menu_item_id, -1)} aria-label={`${item.name}を1つ減らす`} disabled={isSubmitting}>−</button>
+                    <output aria-live="polite">{item.quantity}</output>
+                    <button type="button" onClick={() => changeQuantity(item.menu_item_id, 1)} aria-label={`${item.name}を1つ増やす`} disabled={isSubmitting}>＋</button>
+                  </div>
+                  <strong className="cart-line-total">{formatYen(Number(item.price || 0) * item.quantity)}</strong>
+                  <button type="button" className="text-button danger-text" onClick={() => changeQuantity(item.menu_item_id, -item.quantity)} disabled={isSubmitting}>
+                    削除
+                  </button>
+                </li>
+              ))}
+            </ul>
+
+            <div className="ticket-total">
+              <span>合計 {cartSummary.units}点</span>
+              <strong>{formatYen(cartSummary.total)}</strong>
+            </div>
           </div>
 
-          {/* 🌟 追加：ドドンと表示される合計金額エリア */}
-          <div className="bg-red-50 border-2 border-red-200 rounded-xl p-4 mb-6 flex justify-between items-center shadow-sm">
-            <div>
-              <p className="text-xs font-bold text-red-800 mb-1">現在のあなたの合計利用額</p>
-              <p className="text-[10px] text-red-500 font-bold">※取消された注文は含まれません</p>
-            </div>
-            <p className="text-2xl font-black text-red-600">¥{totalSpent.toLocaleString()}</p>
-          </div>
-          
-          {history.length === 0 ? (
-            <div className="text-center py-12 bg-gray-50 rounded-lg border border-dashed border-gray-300">
-              <p className="text-4xl mb-2">🍽️</p>
-              <p className="text-gray-500 font-bold text-sm">まだ注文はありません。</p>
-              <button onClick={() => setActiveTab('menu')} className="mt-4 text-red-600 text-sm font-bold hover:underline">メニューを見る</button>
-            </div>
+          {cart.length === 0 ? (
+            <EmptyState
+              symbol="＋"
+              title="カートは空です"
+              description="メニューに戻って商品を選んでください。"
+              action={<button type="button" className="primary-button compact-button" onClick={() => switchView('menu')}>メニューを見る</button>}
+            />
           ) : (
-            <div className="space-y-3">
-              {history.map((order) => (
-                <div key={order.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg border shadow-sm">
-                  <div className="flex-1 pr-2">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs text-gray-500 font-black">{formatTime(order.created_at)}</span>
-                      {order.status === 'pending' ? (
-                        <span className="text-[10px] px-2 py-0.5 rounded font-bold bg-yellow-100 text-yellow-800 border border-yellow-200">担当者確認中</span>
-                      ) : (
-                        <span className="text-[10px] px-2 py-0.5 rounded font-bold bg-green-100 text-green-800 border border-green-200">受付済み</span>
-                      )}
-                    </div>
-                    <p className="font-bold text-gray-800 leading-tight mb-1">{order.item_name}</p>
-                    {/* 🌟 追加：単価×個数の内訳 */}
-                    <p className="text-[11px] font-bold text-gray-500">
-                      {order.size} (¥{order.price} × {order.quantity})
-                    </p>
-                  </div>
-                  <div className="text-right pl-2 border-l border-gray-200">
-                    {/* 🌟 変更：大きく小計を表示 */}
-                    <p className="text-[10px] text-gray-400 font-bold">小計</p>
-                    <p className="font-black text-lg text-red-600">¥{(order.price * order.quantity).toLocaleString()}</p>
-                  </div>
-                </div>
-              ))}
-              <p className="text-[10px] text-center text-gray-400 mt-6 font-bold">※間違えて注文した場合は、担当者に直接お伝えください。</p>
+            <div className="submit-panel">
+              <span>押すと担当者へ注文が送られます</span>
+              <button type="button" className="primary-button" onClick={submitOrder} disabled={isSubmitting} aria-busy={isSubmitting}>
+                {isSubmitting ? '注文を送信しています…' : `この${cartSummary.units}点を注文する`}
+              </button>
             </div>
           )}
-        </div>
+        </>
       )}
-    </div>
+
+      {view === 'history' && (
+        <>
+          <ScreenIntro
+            eyebrow="注文後の確認"
+            title="自分の注文履歴"
+            description="「確認中」は担当者が店員へ伝える前、「注文済み」は伝達済みです。"
+            action={<button type="button" className="secondary-button compact-button" onClick={() => historyQuery.mutate()} disabled={historyQuery.isValidating}>更新する</button>}
+          />
+
+          {historyQuery.isLoading && !historyQuery.data ? (
+            <LoadingState label="注文履歴を読み込んでいます" />
+          ) : historyQuery.error && !historyQuery.data ? (
+            <EmptyState
+              symbol="!"
+              title="注文履歴を読み込めませんでした"
+              description={getErrorMessage(historyQuery.error, '通信状態を確認してください。')}
+              action={<button type="button" className="primary-button compact-button" onClick={() => historyQuery.mutate()}>もう一度読み込む</button>}
+            />
+          ) : (
+            <>
+              {historyQuery.error && (
+                <StatusNotice tone="warning" title="最新の履歴へ更新できませんでした">
+                  直前に読み込んだ内容を表示しています。
+                </StatusNotice>
+              )}
+              <div className="history-totals">
+                <div className="confirmed-total">
+                  <span>注文済みの確定額</span>
+                  <strong>{formatYen(historyTotals.confirmed)}</strong>
+                </div>
+                <div>
+                  <span>担当者が確認中の予定額</span>
+                  <strong>{formatYen(historyTotals.pending)}</strong>
+                </div>
+              </div>
+
+              {history.length === 0 ? (
+                <EmptyState
+                  symbol="○"
+                  title="まだ注文はありません"
+                  description="メニューから商品を選んでみましょう。"
+                  action={<button type="button" className="primary-button compact-button" onClick={() => switchView('menu')}>注文を始める</button>}
+                />
+              ) : (
+                <ul className="history-list">
+                  {history.map((order) => {
+                    const status = getOrderStatus(order.status);
+                    return (
+                      <li key={order.id} className={order.status === 'cancelled' ? 'is-cancelled' : ''}>
+                        <div className="history-line-top">
+                          <time>{formatTime(order.created_at)}</time>
+                          <span className={`status-pill status-${status.tone}`}>{status.label}</span>
+                        </div>
+                        <div className="history-line-main">
+                          <div>
+                            <strong>{order.item_name}</strong>
+                            <span>{order.size}・{formatYen(order.price)} × {order.quantity}</span>
+                          </div>
+                          <strong>{formatYen(orderTotal(order))}</strong>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </>
+          )}
+        </>
+      )}
+    </section>
   );
 }

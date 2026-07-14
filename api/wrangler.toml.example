@@ -1,8 +1,49 @@
-name = "replace-with-worker-name"
+name = "reitaisai-api"
+main = "src/index.ts"
 compatibility_date = "2026-04-26"
-compatibility_flags = ["nodejs_compat"]
+workers_dev = false
 
-[[d1_databases]]
+# Worker name, route pattern, FRONTEND_URL, DISCORD_CLIENT_ID, and database_id
+# must all use different values in staging and production.
+
+[env.staging]
+name = "replace-with-staging-worker-name"
+
+[env.staging.vars]
+APP_ENV = "staging"
+ALLOWED_ORIGINS = "https://staging-app.example.com"
+FRONTEND_URL = "https://staging-app.example.com"
+SESSION_SITE_DOMAIN = "example.com"
+DISCORD_CLIENT_ID = "replace-with-staging-discord-client-id"
+DISCORD_REDIRECT_URI = "https://staging-api.example.com/api/auth/discord/callback"
+
+[[env.staging.d1_databases]]
 binding = "DB"
-database_name = "replace-with-local-or-staging-database-name"
-database_id = "replace-with-local-or-staging-database-id"
+database_name = "replace-with-staging-database-name"
+database_id = "replace-with-staging-database-id"
+migrations_dir = "migrations"
+
+[[env.staging.routes]]
+pattern = "staging-api.example.com"
+custom_domain = true
+
+[env.production]
+name = "replace-with-production-worker-name"
+
+[env.production.vars]
+APP_ENV = "production"
+ALLOWED_ORIGINS = "https://app.example.com"
+FRONTEND_URL = "https://app.example.com"
+SESSION_SITE_DOMAIN = "example.com"
+DISCORD_CLIENT_ID = "replace-with-production-discord-client-id"
+DISCORD_REDIRECT_URI = "https://api.example.com/api/auth/discord/callback"
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "replace-with-production-database-name"
+database_id = "replace-with-production-database-id"
+migrations_dir = "migrations"
+
+[[env.production.routes]]
+pattern = "api.example.com"
+custom_domain = true

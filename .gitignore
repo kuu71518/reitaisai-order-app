@@ -22,6 +22,8 @@ coverage/
 /menu_list.txt
 /private-data/
 /api/wrangler.toml
+/api/wrangler.deploy.toml
+/api/fixtures/production.local.sql
 
 # Local databases and credentials
 *.sqlite

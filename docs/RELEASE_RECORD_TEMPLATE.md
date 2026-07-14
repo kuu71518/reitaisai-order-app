@@ -1,0 +1,71 @@
+# Release record template
+
+> Copy this file to `private-data/release-YYYYMMDD-HHmm.md`. Do not enter real values in the tracked template.
+
+- Release date/time (JST):
+- Release date/time (UTC/RFC3339):
+- Verification date/time (JST):
+- Verification date/time (UTC/RFC3339):
+- Operator:
+- Rollback decision maker:
+- GitHub repository:
+- Expected Git commit SHA:
+- Pages-reported Git commit SHA:
+- Worktree clean at verification (yes/no):
+- Node.js / npm version:
+- Wrangler / Hono / Vite version:
+- npm audit result (root / api / frontend):
+- Cloudflare account:
+- Verified zone apex:
+- Zone status and ownership checked at:
+- Pages project:
+- Production Pages custom domain:
+- Staging Pages custom domain:
+- Previous production Pages project/deployment ID:
+- Previous production Pages commit SHA:
+- Previous production Pages custom domain and VITE_API_URL:
+- Previous production DNS records:
+- New production Pages deployment ID:
+- New production Pages deployment completed at:
+- Production Worker:
+- Staging Worker:
+- Production Worker API custom domain:
+- Staging Worker API custom domain:
+- Previous production Worker/version/deployment ID:
+- Previous Worker route/custom domain:
+- Previous Worker compatibility date and variable names:
+- Previous Worker DB binding name/ID:
+- Previous Worker secrets recoverable from password manager (yes/no):
+- New production Worker version/deployment ID:
+- Previous production D1 name:
+- Previous production D1 ID:
+- New production D1 name:
+- New production D1 ID:
+- Baseline pre-check (`sqlite_schema` app table count):
+- Previous D1 cutover Time Travel bookmark:
+- Previous D1 cutover bookmark timestamp:
+- New D1 pre-open Time Travel bookmark:
+- New D1 pre-open bookmark timestamp:
+- Applied migrations:
+- User counts by role:
+- Menu counts by category:
+- Previous-system pending order count at cutover:
+- Previous-system last order ID/time:
+- Previous-system non-cancelled order count at cutover:
+- Previous-system non-cancelled total amount at cutover:
+- Cutover/old-order handling decision:
+- Order intake stopped at:
+- Production URL announced at:
+- Production order intake opened at:
+- First real production order ID/time:
+- First real order cross-check result:
+- WAF plan/rule ID or name:
+- WAF path/rate/period/action:
+- WAF staging verification result:
+- Pages rollback target:
+- Worker rollback target:
+- Whole-stack rollback target/route plan:
+- D1 restore approver and data-loss acknowledgement:
+- Smoke-test result:
+- First 15-minute monitoring result:
+- Notes:

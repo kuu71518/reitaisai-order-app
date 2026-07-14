@@ -269,3 +269,4 @@ INSERT INTO menu_items (name, category, price, size) VALUES
 ('揚げパンバニラアイスのせ 塩キャラメルソース', 'デザート', 363, '普通'),
 ('ぱふぇ', 'デザート', 363, '普通'),
 ('バカ盛り雪見だいふく', 'デザート', 858, 'バカ');
+-- LEGACY / DESTRUCTIVE: Do not execute. Use api/fixtures/production.local.sql.

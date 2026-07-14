@@ -1,76 +1,67 @@
-import React from 'react';
 import useSWR from 'swr';
+import { apiFetcher, getErrorMessage } from '../lib/api';
+import { formatYen } from '../lib/format';
+import { EmptyState, LoadingState, ScreenIntro, StatusNotice } from './States';
 
-const API_URL = import.meta.env.VITE_API_URL;
-const fetcher = (url) => fetch(url).then(res => res.json());
-
-export default function Summary() {
-  // 1. 通常の注文集計
-  const { data: summaryData } = useSWR(`${API_URL}/api/orders/summary`, fetcher, { refreshInterval: 5000 });
-  // 2. 取消履歴（マイナス分）
-  const { data: cancelledData } = useSWR(`${API_URL}/api/cancelled-orders`, fetcher, { refreshInterval: 5000 });
-
-  const summary = summaryData?.data || [];
-  const cancelled = cancelledData?.data || [];
-
-  const totalAmount = summary.reduce((sum, item) => sum + item.total_price, 0);
-  const cancelledTotal = cancelled.reduce((sum, item) => sum + item.price, 0);
-  const netTotal = totalAmount - cancelledTotal;
+export default function Summary({ currentUser }) {
+  const { data, error, isLoading, isValidating, mutate } = useSWR(
+    '/api/orders/summary',
+    apiFetcher,
+    { refreshInterval: 15000, revalidateOnFocus: true },
+  );
+  const people = Array.isArray(data?.data) ? data.data : [];
+  const groupTotal = people.reduce((sum, person) => sum + Number(person.total_price || 0), 0);
 
   return (
-    <div className="space-y-6 pb-24 p-2">
-      <h2 className="text-xl font-black text-gray-800">現在の会計状況</h2>
+    <section className="screen summary-screen">
+      <ScreenIntro
+        eyebrow={`${currentUser.group_id} 会計`}
+        title="グループの支払い額"
+        description="取消済みを除いた注文を、参加者ごとに集計しています。会計前に最新の金額を確認してください。"
+        action={(
+          <button type="button" className="secondary-button compact-button" onClick={() => mutate()} disabled={isValidating}>
+            {isValidating ? '更新中…' : '今すぐ更新'}
+          </button>
+        )}
+      />
 
-      {/* 合計金額カード */}
-      <div className="bg-white border-2 border-blue-500 rounded-2xl p-6 shadow-sm">
-        <div className="flex justify-between text-sm text-gray-500 mb-1">
-          <span>注文合計額</span>
-          <span>¥{totalAmount.toLocaleString()}</span>
-        </div>
-        <div className="flex justify-between text-sm text-red-500 mb-3 font-bold italic">
-          <span>誤注文取消分</span>
-          <span>- ¥{cancelledTotal.toLocaleString()}</span>
-        </div>
-        <div className="border-t pt-3 flex justify-between items-center">
-          <span className="font-bold text-gray-700">実支払い合計</span>
-          <span className="text-3xl font-black text-blue-600">¥{netTotal.toLocaleString()}</span>
-        </div>
-      </div>
-
-      {/* 取消履歴（なぜ金額が減ったかの証拠） */}
-      {cancelled.length > 0 && (
-        <div className="bg-red-50 border border-red-100 rounded-xl p-4">
-          <h3 className="text-xs font-bold text-red-600 mb-2 uppercase tracking-wider">取消履歴（マイナス内訳）</h3>
-          <div className="space-y-1">
-            {cancelled.map(c => (
-              <div key={c.id} className="text-[11px] text-red-500 flex justify-between border-b border-red-100 pb-1">
-                <span>{c.user_name}: {c.item_name}</span>
-                <span className="font-bold">-¥{c.price.toLocaleString()}</span>
+      {isLoading ? (
+        <LoadingState label="会計を集計しています" />
+      ) : error ? (
+        <StatusNotice tone="danger" title="会計を読み込めませんでした" live>
+          {getErrorMessage(error, '通信状態を確認して、もう一度お試しください。')}
+        </StatusNotice>
+      ) : people.length === 0 ? (
+        <EmptyState title="まだ注文はありません" description="注文すると、ここに参加者ごとの金額が表示されます。" />
+      ) : (
+        <>
+          <article className="summary-total-card" aria-label="グループ会計の合計">
+            <div className="summary-total-heading">
+              <div>
+                <span>{currentUser.group_id}の合計</span>
+                <small>取消済みの注文は含みません</small>
               </div>
-            ))}
-          </div>
-        </div>
-      )} {/* ← ここの閉じカッコ `)}` が `</div>` になってしまっていたのが原因です！ */}
+              <strong>{formatYen(groupTotal)}</strong>
+            </div>
+            <dl>
+              <div><dt>支払い対象</dt><dd>{people.length}人</dd></div>
+              <div><dt>自動更新</dt><dd>15秒ごと</dd></div>
+            </dl>
+          </article>
 
-      {/* 個人別の支払い目安 */}
-      <div className="bg-white border rounded-xl p-4 shadow-sm">
-        <h3 className="font-bold text-gray-700 mb-4 border-b pb-2">個人別集計（取消反映済）</h3>
-        <div className="space-y-3">
-          {summary.map(user => {
-            // その人の取消分を計算
-            const userCancelled = cancelled
-              .filter(c => c.user_name === user.name)
-              .reduce((sum, c) => sum + c.price, 0);
-            
-            return (
-              <div key={user.name} className="flex justify-between items-center">
-                <span className="font-medium text-gray-600">{user.name}</span>
-                <span className="font-black text-gray-800">¥{(user.total_price - userCancelled).toLocaleString()}</span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </div>
+          <section className="summary-people" aria-labelledby="summary-people-heading">
+            <h2 id="summary-people-heading">参加者ごとの金額</h2>
+            <ul className="summary-people-list">
+              {people.map((person) => (
+                <li key={person.name}>
+                  <span>{person.name}</span>
+                  <strong>{formatYen(person.total_price)}</strong>
+                </li>
+              ))}
+            </ul>
+          </section>
+        </>
+      )}
+    </section>
   );
 }

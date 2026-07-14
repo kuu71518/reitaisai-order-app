@@ -1,5 +1,12 @@
 {
-  "devDependencies": {
-    "wrangler": "^4.84.0"
+  "name": "reitaisai-order-app",
+  "private": true,
+  "engines": {
+    "node": "22.17.x"
+  },
+  "packageManager": "npm@10.9.2",
+  "scripts": {
+    "test": "npm --prefix api test && npm --prefix frontend test",
+    "verify": "npm --prefix api run verify && npm --prefix frontend run lint && npm --prefix frontend test && npm --prefix frontend run build"
   }
 }

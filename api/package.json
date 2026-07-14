@@ -1,16 +1,38 @@
 {
   "name": "reitaisai-order-api",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "22.17.x"
+  },
+  "packageManager": "npm@10.9.2",
   "scripts": {
-    "dev": "wrangler dev src/index.ts",
-    "deploy": "wrangler deploy --minify src/index.ts"
+    "dev": "wrangler dev --config wrangler.local.toml",
+    "test": "node --experimental-strip-types --test src/*.test.js src/*.test.ts scripts/*.test.mjs",
+    "typecheck": "tsc --noEmit",
+    "dry-run": "wrangler deploy --dry-run --minify --config wrangler.local.toml",
+    "verify": "npm run test && npm run typecheck && npm run dry-run",
+    "check:deploy-config": "node scripts/check-deploy-config.mjs --env all",
+    "check:deploy-config:staging": "node scripts/check-deploy-config.mjs --env staging",
+    "check:deploy-config:production": "node scripts/check-deploy-config.mjs --env production",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local --config wrangler.local.toml",
+    "db:migrations:list:staging": "npm run check:deploy-config:staging && wrangler d1 migrations list DB --remote --env staging --config wrangler.deploy.toml",
+    "db:migrate:staging": "npm run check:deploy-config:staging && wrangler d1 migrations apply DB --remote --env staging --config wrangler.deploy.toml",
+    "db:migrations:list:production": "npm run check:deploy-config:production && wrangler d1 migrations list DB --remote --env production --config wrangler.deploy.toml",
+    "db:assert-empty:production": "npm run check:deploy-config:production && node scripts/check-production-d1-empty.mjs",
+    "db:bootstrap:production": "npm run db:assert-empty:production && wrangler d1 migrations apply DB --remote --env production --config wrangler.deploy.toml",
+    "db:migrate:production": "npm run check:deploy-config:production && wrangler d1 migrations apply DB --remote --env production --config wrangler.deploy.toml",
+    "db:seed:production:check": "node scripts/check-production-seed.mjs",
+    "db:seed:production": "npm run check:deploy-config:production && npm run db:seed:production:check && wrangler d1 execute DB --remote --env production --config wrangler.deploy.toml --file fixtures/production.local.sql",
+    "deploy:staging": "npm run check:deploy-config:staging && wrangler deploy --minify --env staging --config wrangler.deploy.toml",
+    "deploy:production": "npm run check:deploy-config:production && wrangler deploy --minify --env production --config wrangler.deploy.toml"
   },
   "dependencies": {
-    "hono": "^4.0.0",
-    "web-push": "^3.6.7"
+    "hono": "4.12.30"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20240101.0",
-    "@types/web-push": "^3.6.4",
-    "wrangler": "^3.0.0"
+    "@cloudflare/workers-types": "5.20260714.1",
+    "typescript": "5.9.3",
+    "wrangler": "4.110.0"
   }
 }

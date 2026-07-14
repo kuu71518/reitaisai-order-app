@@ -1,108 +1,132 @@
-import React, { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { getDiscordLoginUrl } from '../lib/api';
+import { StatusNotice } from './States';
 
-const API_URL = import.meta.env.VITE_API_URL;
+const AUTH_MESSAGES = {
+  pending: {
+    tone: 'info',
+    title: '管理者の連携待ちです',
+    message: '本人確認は完了しました。下の確認コードをスタッフへ直接見せてください。',
+  },
+  cancelled: {
+    tone: 'warning',
+    title: 'Discordでの確認を中止しました',
+    message: '注文するときは、下のボタンからもう一度進めてください。',
+  },
+  state_error: {
+    tone: 'danger',
+    title: '安全確認の期限が切れました',
+    message: 'この画面から、もう一度Discordでログインしてください。',
+  },
+  failed: {
+    tone: 'danger',
+    title: 'Discordで確認できませんでした',
+    message: '通信状態を確認して、もう一度お試しください。続く場合はグループ担当者へ画面を見せてください。',
+  },
+};
 
-export default function Login({ onLogin }) {
-  // 初期値を「Aグループ」に設定
-  const [groupId, setGroupId] = useState('Aグループ');
-  const [discordId, setDiscordId] = useState('');
-  const [error, setError] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+function readAuthResult() {
+  try {
+    return new URLSearchParams(window.location.search).get('auth') || '';
+  } catch {
+    return '';
+  }
+}
 
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    setError('');
-    setIsLoading(true);
+function readVerificationCode() {
+  try {
+    const code = new URLSearchParams(window.location.hash.replace(/^#/, '')).get('code') || '';
+    return /^[A-HJ-NP-Z2-9]{8}$/.test(code) ? code : '';
+  } catch {
+    return '';
+  }
+}
 
-    try {
-      const response = await fetch(`${API_URL}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          group_id: groupId, 
-          discord_id: discordId.trim() // 空白が混じっても大丈夫なように除去
-        })
-      });
+function formatVerificationCode(code) {
+  return code ? `${code.slice(0, 4)}-${code.slice(4)}` : '';
+}
 
-      const data = await response.json();
+export default function Login({ notice = '', sessionError = '' }) {
+  const [authResult] = useState(readAuthResult);
+  const [verificationCode] = useState(readVerificationCode);
+  const [isLeaving, setIsLeaving] = useState(false);
+  const authMessage = AUTH_MESSAGES[authResult];
 
-      if (data.success) {
-        localStorage.setItem('reitaisai_app_user', JSON.stringify(data.user));
-        onLogin(data.user);
-      } else {
-        setError(data.message || 'ログインに失敗しました');
-      }
-    } catch (err) {
-      setError('サーバーとの通信に失敗しました。');
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  useEffect(() => {
+    if (!authResult) return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete('auth');
+    url.hash = '';
+    window.history.replaceState({}, '', `${url.pathname}${url.search}`);
+  }, [authResult]);
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 p-6">
-      
-      {/* 🌟 追加：丸いアイコン（白い枠の上に配置） */}
-      {/* サイズを変更したい場合は、以下の「w-24 h-24」の数字を同じ値で変更してください */}
-      {/* 例: 少し小さくするなら「w-20 h-20」、大きくするなら「w-32 h-32」 */}
-      <img 
-        src="/icon.png" 
-        alt="例大祭オーダー アイコン" 
-        className="w-24 h-24 rounded-full object-cover mb-6 shadow-md border-4 border-white"
-      />
+    <div className="login-shell">
+      <div className="festival-ribbon ribbon-one" aria-hidden="true" />
+      <div className="festival-ribbon ribbon-two" aria-hidden="true" />
+      <main className="login-card">
+        <header className="login-heading">
+          <img src="/icon-192.png" alt="" className="login-stamp" />
+          <div>
+            <p className="eyebrow">例大祭 打ち上げ</p>
+            <h1>かんたん注文</h1>
+          </div>
+        </header>
 
-      {/* 👇 既存のログイン枠 */}
-      <div className="w-full max-w-sm bg-white rounded-xl shadow-lg p-6">
-        <h1 className="text-2xl font-black text-center text-red-600 mb-6">
-          打ち上げオーダー
-        </h1>
-        
-        {error && (
-          <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-3 mb-4 text-sm font-bold">
-            {error}
+        <div className="login-message">
+          <strong>Discordで本人確認して始めます</strong>
+          <span>文字入力はありません。確認後、この注文画面へ自動で戻ります。</span>
+        </div>
+
+        {notice && <StatusNotice tone="success" title={notice} />}
+        {sessionError && <StatusNotice tone="danger" title="ログイン状態を確認できませんでした" live>{sessionError}</StatusNotice>}
+        {authMessage && (
+          <StatusNotice tone={authMessage.tone} title={authMessage.title} live>
+            {authMessage.message}
+          </StatusNotice>
+        )}
+        {authResult === 'pending' && verificationCode && (
+          <div className="discord-verification-code" role="status" aria-label="スタッフへ見せる確認コード">
+            <span>スタッフへ見せる番号</span>
+            <strong>{formatVerificationCode(verificationCode)}</strong>
+            <small>スタッフが連携を終えたら、下のボタンをもう一度押します。</small>
           </div>
         )}
 
-        <form onSubmit={handleLogin} className="space-y-5">
-          <div>
-            <label className="block text-gray-700 font-bold mb-2 text-sm">自分のグループ</label>
-            <select 
-              className="w-full border border-gray-300 rounded-lg p-3 text-lg focus:ring-2 focus:ring-red-500 outline-none bg-gray-50 font-bold"
-              value={groupId}
-              onChange={(e) => setGroupId(e.target.value)}
-            >
-              <option value="Aグループ">Aグループ</option>
-              <option value="あグループ">あグループ</option>
-              <option value="管理">管理</option>
-            </select>
-          </div>
+        <ol className="discord-login-steps" aria-label="ログインの流れ">
+          <li>
+            <span aria-hidden="true">1</span>
+            <div>
+              <strong>Discordを開く</strong>
+              <small>下のボタンを押します。</small>
+            </div>
+          </li>
+          <li>
+            <span aria-hidden="true">2</span>
+            <div>
+              <strong>確認して戻る</strong>
+              <small>Discordの画面で「認証」を押します。</small>
+            </div>
+          </li>
+        </ol>
 
-          <div>
-            <label className="block text-gray-700 font-bold mb-2 text-sm">Discord ID</label>
-            <input 
-              type="text" 
-              className="w-full border border-gray-300 rounded-lg p-3 text-lg focus:ring-2 focus:ring-red-500 outline-none"
-              placeholder="例: discord_ID"
-              value={discordId}
-              onChange={(e) => setDiscordId(e.target.value)}
-              required
-            />
-            <p className="text-xs text-gray-500 mt-2">
-              ※事前に申請したDiscordのアカウント名（ID）を入力してください。
-            </p>
-          </div>
+        <a
+          className={isLeaving ? 'discord-login-button is-loading' : 'discord-login-button'}
+          href={getDiscordLoginUrl()}
+          onClick={() => setIsLeaving(true)}
+          aria-busy={isLeaving}
+        >
+          <span className="discord-button-mark" aria-hidden="true">●●</span>
+          <span>{isLeaving ? 'Discordを開いています…' : authResult === 'pending' ? '連携後にもう一度ログイン' : 'Discordでログイン'}</span>
+        </a>
 
-          <button 
-            type="submit" 
-            disabled={isLoading}
-            className={`w-full text-white font-bold py-4 rounded-lg shadow-md mt-2 transition-transform ${
-              isLoading ? 'bg-gray-400' : 'bg-red-600 hover:bg-red-700 active:scale-95'
-            }`}
-          >
-            {isLoading ? '通信中...' : 'ログインする'}
-          </button>
-        </form>
-      </div>
+        <div className="discord-privacy-note">
+          <strong>確認する情報</strong>
+          <span>DiscordのアカウントIDと表示名だけを確認します。メッセージは取得しません。</span>
+        </div>
+
+        <p className="login-help">初回だけ管理者の連携が必要です。うまく入れないときは、この画面をグループ担当者へ見せてください。</p>
+      </main>
     </div>
   );
 }

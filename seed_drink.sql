@@ -44,3 +44,4 @@ INSERT INTO menu_items (category, name, size, price) VALUES
 ('ドリンク', 'ジンジャーエール', 'バカ', 748),
 ('ドリンク', 'オレンジジュース', '普通', 363),
 ('ドリンク', 'オレンジジュース', 'バカ', 748);
+-- LEGACY REFERENCE ONLY: Do not execute. Use api/fixtures/production.local.sql.

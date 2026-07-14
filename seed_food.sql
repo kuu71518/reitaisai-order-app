@@ -56,3 +56,4 @@ INSERT INTO menu_items (category, name, size, price) VALUES
 ('デザート', 'バニラアイス', '普通', 220),
 ('デザート', '黒蜜ときなこのアイス', '普通', 308),
 ('デザート', 'バカ盛り雪見だいふく', 'バカ', 858);
+-- LEGACY REFERENCE ONLY: Do not execute. Use api/fixtures/production.local.sql.
