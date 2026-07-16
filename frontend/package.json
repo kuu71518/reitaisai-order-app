@@ -11,7 +11,7 @@
     "dev": "vite",
     "build": "vite build && node scripts/verify-build.mjs",
     "lint": "eslint .",
-    "test": "node --test src/lib/format.test.js src/lib/legacyServiceWorkerMigration.test.js",
+    "test": "node --test src/lib/*.test.js",
     "preview": "vite preview"
   },
   "dependencies": {

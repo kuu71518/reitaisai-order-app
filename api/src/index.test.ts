@@ -52,3 +52,20 @@ test('preflight allows only the configured exact Origin', async () => {
   }, env);
   assert.equal(denied.status, 403);
 });
+
+test('OAuth login fails closed when the Discord HMAC key is missing', async () => {
+  const response = await app.request('/api/auth/discord/start', {}, {
+    ...env,
+    FRONTEND_URL: allowedOrigin,
+    SESSION_SITE_DOMAIN: 'example.test',
+    DISCORD_CLIENT_ID: '123456789012345678',
+    DISCORD_CLIENT_SECRET: 'test-only-client-secret',
+    DISCORD_REDIRECT_URI: 'https://api.example.test/api/auth/discord/callback',
+  });
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), {
+    success: false,
+    message: 'ログイン設定が完了していません。',
+    code: 'AUTH_NOT_CONFIGURED',
+  });
+});

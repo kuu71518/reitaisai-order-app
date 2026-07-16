@@ -2,16 +2,16 @@ import { Hono, type Context, type Next } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import {
   cleanText,
-  createVerificationCode,
+  deriveDiscordIdHmac,
   deriveCsrfToken,
   hasRole,
   isAllowedOrigin,
+  isAssignableUserRole,
   isClientRequestId,
   isDiscordSnowflake,
   isOrderStatus,
   isUnsafeMethod,
   isUserRole,
-  normalizeVerificationCode,
   parsePositiveInteger,
   randomToken,
   sha256Base64Url,
@@ -22,11 +22,11 @@ import type { AppEnv, AuthContext, Bindings, SessionUser, UserRole } from './typ
 const SESSION_IDLE_SECONDS = 5 * 60 * 60;
 const SESSION_ABSOLUTE_SECONDS = 12 * 60 * 60;
 const OAUTH_STATE_SECONDS = 10 * 60;
-const LINK_REQUEST_SECONDS = 7 * 24 * 60 * 60;
 const SESSION_TOUCH_SECONDS = 5 * 60;
 const DISCORD_AUTHORIZE_URL = 'https://discord.com/oauth2/authorize';
 const DISCORD_TOKEN_URL = 'https://discord.com/api/v10/oauth2/token';
 const DISCORD_ME_URL = 'https://discord.com/api/v10/users/@me';
+const ADMIN_ONLY_MENU_CATEGORY = '宴会コース';
 const PUBLIC_PATHS = new Set([
   '/api/health',
   '/api/auth/discord/start',
@@ -43,8 +43,6 @@ type SessionRow = SessionUser & {
 
 type DiscordUser = {
   id: string;
-  username: string;
-  global_name?: string | null;
 };
 
 type OAuthConfig = {
@@ -52,6 +50,7 @@ type OAuthConfig = {
   clientSecret: string;
   redirectUri: string;
   frontendUrl: string;
+  discordIdHmacKey: string;
 };
 
 const app = new Hono<AppEnv>();
@@ -124,7 +123,8 @@ function getOAuthConfig(env: Bindings): OAuthConfig | null {
   const clientSecret = cleanText(env.DISCORD_CLIENT_SECRET, 256);
   const redirectUri = cleanText(env.DISCORD_REDIRECT_URI, 500);
   const frontendUrl = cleanText(env.FRONTEND_URL, 500);
-  if (!clientId || !clientSecret || !redirectUri || !frontendUrl) return null;
+  const discordIdHmacKey = cleanText(env.DISCORD_ID_HMAC_KEY, 512);
+  if (!clientId || !clientSecret || !redirectUri || !frontendUrl || discordIdHmacKey.length < 32) return null;
 
   try {
     const redirect = new URL(redirectUri);
@@ -146,15 +146,14 @@ function getOAuthConfig(env: Bindings): OAuthConfig | null {
     return null;
   }
 
-  return { clientId, clientSecret, redirectUri, frontendUrl };
+  return { clientId, clientSecret, redirectUri, frontendUrl, discordIdHmacKey };
 }
 
-function redirectToFrontend(c: Context<AppEnv>, result: string, verificationCode = '') {
+function redirectToFrontend(c: Context<AppEnv>, result: string) {
   const config = getOAuthConfig(c.env);
   if (!config) return fail(c, 503, 'ログイン設定が完了していません。', 'AUTH_NOT_CONFIGURED');
   const target = new URL(config.frontendUrl);
   target.searchParams.set('auth', result);
-  if (verificationCode) target.hash = new URLSearchParams({ code: verificationCode }).toString();
   return c.redirect(target.toString(), 302);
 }
 
@@ -310,23 +309,28 @@ async function issueSession(c: Context<AppEnv>, user: SessionUser) {
   setSessionCookie(c, sessionToken);
 }
 
-async function findUserByDiscordId(env: Bindings, discordUserId: string) {
+async function findUserByDiscordId(env: Bindings, discordUserId: string, hmacKey: string) {
+  const discordIdHmac = await deriveDiscordIdHmac(hmacKey, discordUserId);
+  if (!discordIdHmac) return null;
   return env.DB.prepare(`
     SELECT id, name, group_id, role
     FROM users
-    WHERE discord_user_id = ? AND is_active = 1
+    WHERE discord_id_hmac = ? AND is_active = 1
     LIMIT 1
-  `).bind(discordUserId).first<SessionUser>();
+  `).bind(discordIdHmac).first<SessionUser>();
 }
 
-async function tryBootstrapAdmin(env: Bindings, discordUserId: string) {
+async function tryBootstrapAdmin(env: Bindings, discordUserId: string, hmacKey: string) {
   if (!env.BOOTSTRAP_ADMIN_DISCORD_USER_ID
     || !timingSafeEqual(env.BOOTSTRAP_ADMIN_DISCORD_USER_ID, discordUserId)) return null;
+
+  const discordIdHmac = await deriveDiscordIdHmac(hmacKey, discordUserId);
+  if (!discordIdHmac) return null;
 
   const result = await env.DB.prepare(`
     SELECT id, name, group_id, role
     FROM users
-    WHERE role = 'admin' AND is_active = 1 AND discord_user_id IS NULL
+    WHERE role = 'admin' AND is_active = 1 AND discord_id_hmac IS NULL
     ORDER BY id
     LIMIT 2
   `).all<SessionUser>();
@@ -335,44 +339,13 @@ async function tryBootstrapAdmin(env: Bindings, discordUserId: string) {
   const user = result.results[0];
   const update = await env.DB.prepare(`
     UPDATE users
-    SET discord_user_id = ?, updated_at = ?
-    WHERE id = ? AND discord_user_id IS NULL
-  `).bind(discordUserId, nowSeconds(), user.id).run();
+    SET discord_id_hmac = ?, updated_at = ?
+    WHERE id = ? AND discord_id_hmac IS NULL
+  `).bind(discordIdHmac, nowSeconds(), user.id).run();
   if (update.meta.changes !== 1) return null;
 
   await audit(env, user.id, 'AUTH_BOOTSTRAP_LINK', 'user', user.id);
   return user;
-}
-
-async function savePendingDiscordIdentity(env: Bindings, discordUser: DiscordUser) {
-  const now = nowSeconds();
-  const username = cleanText(discordUser.username, 80) || 'Discord利用者';
-  const displayName = cleanText(discordUser.global_name || '', 80) || username;
-  const verificationCode = createVerificationCode();
-  const verificationCodeHash = await sha256Base64Url(`discord-link:${verificationCode}`);
-  await env.DB.prepare(`
-    INSERT INTO discord_link_requests
-      (discord_user_id, username_snapshot, display_name_snapshot, requested_at, expires_at, status, verification_code_hash)
-    VALUES (?, ?, ?, ?, ?, 'pending', ?)
-    ON CONFLICT(discord_user_id) DO UPDATE SET
-      username_snapshot = excluded.username_snapshot,
-      display_name_snapshot = excluded.display_name_snapshot,
-      requested_at = excluded.requested_at,
-      expires_at = excluded.expires_at,
-      status = 'pending',
-      decided_at = NULL,
-      approved_by = NULL,
-      linked_user_id = NULL,
-      verification_code_hash = excluded.verification_code_hash
-  `).bind(
-    discordUser.id,
-    username,
-    displayName,
-    now,
-    now + LINK_REQUEST_SECONDS,
-    verificationCodeHash,
-  ).run();
-  return verificationCode;
 }
 
 app.get('/api/health', (c) => c.json({ success: true, data: { status: 'ok' } }));
@@ -452,17 +425,18 @@ app.get('/api/auth/discord/callback', async (c) => {
     });
     if (!userResponse.ok) return redirectToFrontend(c, 'failed');
 
-    const discordUser = await userResponse.json() as DiscordUser;
-    if (!isDiscordSnowflake(discordUser.id) || !cleanText(discordUser.username, 80)) {
+    const discordPayload: unknown = await userResponse.json();
+    const discordUserId = discordPayload && typeof discordPayload === 'object'
+      && typeof (discordPayload as Partial<DiscordUser>).id === 'string'
+      ? (discordPayload as DiscordUser).id
+      : '';
+    if (!isDiscordSnowflake(discordUserId)) {
       return redirectToFrontend(c, 'failed');
     }
 
-    let user = await findUserByDiscordId(c.env, discordUser.id);
-    if (!user) user = await tryBootstrapAdmin(c.env, discordUser.id);
-    if (!user) {
-      const verificationCode = await savePendingDiscordIdentity(c.env, discordUser);
-      return redirectToFrontend(c, 'pending', verificationCode);
-    }
+    let user = await findUserByDiscordId(c.env, discordUserId, config.discordIdHmacKey);
+    if (!user) user = await tryBootstrapAdmin(c.env, discordUserId, config.discordIdHmacKey);
+    if (!user) return redirectToFrontend(c, 'not_registered');
 
     await issueSession(c, user);
     await audit(c.env, user.id, 'AUTH_LOGIN', 'user', user.id);
@@ -490,12 +464,14 @@ app.post('/api/auth/logout', async (c) => {
 });
 
 app.get('/api/menu', async (c) => {
+  const auth = c.get('auth');
   const { results } = await c.env.DB.prepare(`
     SELECT id, category, name, size, price
     FROM menu_items
     WHERE is_active = 1
+      AND (? = 1 OR (is_admin_only = 0 AND category != '宴会コース'))
     ORDER BY category, name, price, id
-  `).all();
+  `).bind(auth.user.role === 'admin' ? 1 : 0).all();
   return c.json({ success: true, data: results });
 });
 
@@ -512,16 +488,19 @@ app.post('/api/orders', async (c) => {
   }
 
   const menu = await c.env.DB.prepare(`
-    SELECT id, name, category, size, price
-    FROM menu_items WHERE id = ? AND is_active = 1
-  `).bind(menuItemId).first<{ id: number; name: string; category: string; size: string; price: number }>();
+    SELECT id, name, category, size, price, is_admin_only
+    FROM menu_items
+    WHERE id = ? AND is_active = 1
+      AND (? = 1 OR (is_admin_only = 0 AND category != '宴会コース'))
+  `).bind(menuItemId, auth.user.role === 'admin' ? 1 : 0)
+    .first<{ id: number; name: string; category: string; size: string; price: number; is_admin_only: number }>();
   if (!menu) return fail(c, 404, 'この商品は現在注文できません。');
 
   const inserted = await c.env.DB.prepare(`
     INSERT INTO orders
       (user_id, menu_item_id, quantity, status, menu_name_snapshot, menu_size_snapshot,
-       unit_price_snapshot, client_request_id)
-    VALUES (?, ?, ?, 'pending', ?, ?, ?, ?)
+       unit_price_snapshot, client_request_id, order_source, created_by_user_id)
+    VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, 'self', ?)
     ON CONFLICT(user_id, client_request_id) DO NOTHING
   `).bind(
     auth.user.id,
@@ -531,6 +510,7 @@ app.post('/api/orders', async (c) => {
     menu.size,
     menu.price,
     requestId,
+    auth.user.id,
   ).run();
 
   const order = await c.env.DB.prepare(`
@@ -554,6 +534,7 @@ app.get('/api/orders/mine', async (c) => {
       unit_price_snapshot AS price,
       quantity,
       status,
+      CASE WHEN order_source = 'admin' THEN 1 ELSE 0 END AS added_by_admin,
       created_at
     FROM orders
     WHERE user_id = ?
@@ -575,6 +556,7 @@ app.get('/api/manager/orders', async (c) => {
       o.id,
       o.quantity,
       o.status,
+      CASE WHEN o.order_source = 'admin' THEN 1 ELSE 0 END AS added_by_admin,
       u.name AS user_name,
       o.menu_name_snapshot AS menu_name,
       o.menu_size_snapshot AS size
@@ -704,6 +686,7 @@ app.get('/api/admin/orders', async (c) => {
       o.unit_price_snapshot AS price,
       o.quantity,
       o.status,
+      CASE WHEN o.order_source = 'admin' THEN 1 ELSE 0 END AS added_by_admin,
       o.created_at,
       u.group_id
     FROM orders o
@@ -711,6 +694,137 @@ app.get('/api/admin/orders', async (c) => {
     ORDER BY o.created_at DESC, o.id DESC
   `).all();
   return c.json({ success: true, data: results });
+});
+
+app.post('/api/admin/users/:id/orders', async (c) => {
+  const roleError = requireRole(c, ['admin']);
+  if (roleError) return roleError;
+  const auth = c.get('auth');
+  const userId = parsePositiveInteger(c.req.param('id'));
+  const body = await readJsonObject(c);
+  const menuItemId = body ? parsePositiveInteger(body.menu_item_id) : null;
+  const quantity = body ? parsePositiveInteger(body.quantity, 20) : null;
+  const requestId = typeof body?.request_id === 'string' ? body.request_id : '';
+  if (!userId || !menuItemId || !quantity || !isClientRequestId(requestId)) {
+    return fail(c, 422, '参加者、商品、個数、送信識別子を確認してください。');
+  }
+
+  const [target, menu] = await Promise.all([
+    c.env.DB.prepare(`
+      SELECT id FROM users WHERE id = ? AND is_active = 1 AND role != 'admin'
+    `).bind(userId).first<{ id: number }>(),
+    c.env.DB.prepare(`
+      SELECT id, name, category, size, price, is_admin_only
+      FROM menu_items WHERE id = ? AND is_active = 1
+    `).bind(menuItemId).first<{
+      id: number;
+      name: string;
+      category: string;
+      size: string;
+      price: number;
+      is_admin_only: number;
+    }>(),
+  ]);
+  if (!target) return fail(c, 404, '参加者が見つかりません。');
+  if (!menu) return fail(c, 404, 'この商品は現在注文できません。');
+
+  const now = nowSeconds();
+  const status = menu.is_admin_only === 1 || menu.category === ADMIN_ONLY_MENU_CATEGORY ? 'ordered' : 'pending';
+  const inserted = await c.env.DB.prepare(`
+    INSERT INTO orders
+      (user_id, menu_item_id, quantity, status, menu_name_snapshot, menu_size_snapshot,
+       unit_price_snapshot, client_request_id, ordered_at, order_source, created_by_user_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'admin', ?)
+    ON CONFLICT(user_id, client_request_id) DO NOTHING
+  `).bind(
+    userId,
+    menu.id,
+    quantity,
+    status,
+    menu.name,
+    menu.size,
+    menu.price,
+    requestId,
+    status === 'ordered' ? now : null,
+    auth.user.id,
+  ).run();
+
+  const order = await c.env.DB.prepare(`
+    SELECT id, status FROM orders WHERE user_id = ? AND client_request_id = ?
+  `).bind(userId, requestId).first<{ id: number; status: string }>();
+  if (!order) return fail(c, 500, '注文を保存できませんでした。');
+
+  if (inserted.meta.changes === 1) {
+    await audit(c.env, auth.user.id, 'ADMIN_ORDER_CREATE', 'order', order.id, {
+      target_user_id: userId,
+      quantity,
+      status,
+    });
+  }
+  return c.json({
+    success: true,
+    data: { order_id: order.id, status: order.status, duplicate: inserted.meta.changes === 0 },
+  });
+});
+
+app.post('/api/admin/orders/:id/cancel', async (c) => {
+  const roleError = requireRole(c, ['admin']);
+  if (roleError) return roleError;
+  const auth = c.get('auth');
+  const orderId = parsePositiveInteger(c.req.param('id'));
+  if (!orderId) return fail(c, 422, '注文番号を確認してください。');
+
+  const now = nowSeconds();
+  const result = await c.env.DB.prepare(`
+    UPDATE orders
+    SET status = 'cancelled', cancelled_at = ?, cancelled_by = ?,
+        cancel_reason = '管理者による事前追加の訂正', updated_at = ?
+    WHERE id = ? AND order_source = 'admin' AND status != 'cancelled'
+  `).bind(now, auth.user.id, now, orderId).run();
+  if (result.meta.changes !== 1) {
+    return fail(c, 404, '訂正できる管理者追加注文が見つかりません。');
+  }
+
+  await audit(c.env, auth.user.id, 'ADMIN_ORDER_CANCEL', 'order', orderId, {
+    reason: 'admin_added_order_correction',
+  });
+  return c.json({ success: true });
+});
+
+app.post('/api/admin/users/:id/discord-access/revoke', async (c) => {
+  const roleError = requireRole(c, ['admin']);
+  if (roleError) return roleError;
+  const auth = c.get('auth');
+  const userId = parsePositiveInteger(c.req.param('id'));
+  if (!userId) return fail(c, 422, '参加者を確認してください。');
+
+  const target = await c.env.DB.prepare(`
+    SELECT id
+    FROM users
+    WHERE id = ? AND is_active = 1 AND role != 'admin' AND discord_id_hmac IS NOT NULL
+  `).bind(userId).first<{ id: number }>();
+  if (!target) return fail(c, 404, 'ログイン許可済みの参加者が見つかりません。');
+
+  const now = nowSeconds();
+  const results = await c.env.DB.batch([
+    c.env.DB.prepare(`
+      UPDATE users
+      SET discord_id_hmac = NULL, updated_at = ?
+      WHERE id = ? AND is_active = 1 AND role != 'admin' AND discord_id_hmac IS NOT NULL
+    `).bind(now, userId),
+    c.env.DB.prepare(`
+      UPDATE auth_sessions
+      SET revoked_at = ?
+      WHERE user_id = ? AND revoked_at IS NULL
+        AND EXISTS (SELECT 1 FROM users WHERE id = ? AND role != 'admin')
+    `).bind(now, userId, userId),
+  ]);
+  if (results[0].meta.changes !== 1) {
+    return fail(c, 404, 'ログイン許可済みの参加者が見つかりません。');
+  }
+
+  await audit(c.env, auth.user.id, 'DISCORD_ALLOWLIST_REVOKE', 'user', userId);
+  return c.json({ success: true });
 });
 
 app.get('/api/admin/users', async (c) => {
@@ -723,7 +837,7 @@ app.get('/api/admin/users', async (c) => {
       u.group_id,
       u.role,
       u.is_manual_added,
-      CASE WHEN u.discord_user_id IS NULL THEN 0 ELSE 1 END AS discord_linked,
+      CASE WHEN u.discord_id_hmac IS NULL THEN 0 ELSE 1 END AS discord_registered,
       COALESCE(SUM(CASE WHEN o.status != 'cancelled' THEN o.unit_price_snapshot * o.quantity ELSE 0 END), 0) AS total_spent
     FROM users u
     LEFT JOIN orders o ON o.user_id = u.id
@@ -742,15 +856,25 @@ app.post('/api/admin/users', async (c) => {
   const name = cleanText(body?.name, 80);
   const groupId = cleanText(body?.group_id, 80);
   const role = body?.role;
-  if (!name || !groupId || !isUserRole(role)) return fail(c, 422, '参加者名、グループ、権限を確認してください。');
+  const discordUserId = cleanText(body?.discord_user_id, 22);
+  const hmacKey = cleanText(c.env.DISCORD_ID_HMAC_KEY, 512);
+  if (!name || !groupId || !isAssignableUserRole(role) || !isDiscordSnowflake(discordUserId)) {
+    return fail(c, 422, '参加者名、グループ、権限、DiscordのユーザーIDを確認してください。');
+  }
+  if (hmacKey.length < 32) return fail(c, 503, 'ログイン照合の設定が完了していません。', 'AUTH_NOT_CONFIGURED');
 
-  const result = await c.env.DB.prepare(`
-    INSERT INTO users (name, group_id, role, is_manual_added)
-    VALUES (?, ?, ?, 1)
-  `).bind(name, groupId, role).run();
-  const userId = Number(result.meta.last_row_id);
-  await audit(c.env, auth.user.id, 'USER_CREATE', 'user', userId, { role, group_id: groupId });
-  return c.json({ success: true, data: { user_id: userId } });
+  const discordIdHmac = await deriveDiscordIdHmac(hmacKey, discordUserId);
+  try {
+    const result = await c.env.DB.prepare(`
+      INSERT INTO users (name, group_id, role, discord_id_hmac, is_manual_added)
+      VALUES (?, ?, ?, ?, 1)
+    `).bind(name, groupId, role, discordIdHmac).run();
+    const userId = Number(result.meta.last_row_id);
+    await audit(c.env, auth.user.id, 'USER_CREATE', 'user', userId, { role, group_id: groupId });
+    return c.json({ success: true, data: { user_id: userId, discord_registered: true } });
+  } catch {
+    return fail(c, 409, 'このDiscordアカウントは、すでに別の参加者へ登録されています。');
+  }
 });
 
 app.patch('/api/admin/users/:id', async (c) => {
@@ -761,96 +885,57 @@ app.patch('/api/admin/users/:id', async (c) => {
   const body = await readJsonObject(c);
   const groupId = cleanText(body?.group_id, 80);
   const role = body?.role;
+  const hasDiscordUserId = Boolean(body && Object.prototype.hasOwnProperty.call(body, 'discord_user_id'));
+  const discordUserId = hasDiscordUserId ? cleanText(body?.discord_user_id, 22) : '';
   if (!userId || !groupId || !isUserRole(role)) return fail(c, 422, '参加者、グループ、権限を確認してください。');
 
   const target = await c.env.DB.prepare(`
     SELECT id, role FROM users WHERE id = ? AND is_active = 1
   `).bind(userId).first<{ id: number; role: UserRole }>();
   if (!target) return fail(c, 404, '参加者が見つかりません。');
-  if (target.role === 'admin' && role !== 'admin') {
-    const adminCount = await c.env.DB.prepare(`
-      SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND is_active = 1
-    `).first<{ count: number }>();
-    if (Number(adminCount?.count || 0) <= 1) return fail(c, 409, '最後の管理者の権限は変更できません。');
+  if (target.role === 'admin') {
+    if (role !== 'admin' || hasDiscordUserId) {
+      return fail(c, 409, '管理者アカウントの権限とDiscord登録はこの画面から変更できません。');
+    }
+  } else if (!isAssignableUserRole(role)) {
+    return fail(c, 409, '管理者アカウントを追加または変更することはできません。');
   }
 
-  try {
-    await c.env.DB.prepare(`
-      UPDATE users SET group_id = ?, role = ?, updated_at = ? WHERE id = ?
-    `).bind(groupId, role, nowSeconds(), userId).run();
-  } catch {
-    return fail(c, 409, '最後の管理者の権限は変更できません。');
+  let discordIdHmac = '';
+  if (hasDiscordUserId) {
+    if (!isDiscordSnowflake(discordUserId)) return fail(c, 422, 'DiscordのユーザーIDを確認してください。');
+    const hmacKey = cleanText(c.env.DISCORD_ID_HMAC_KEY, 512);
+    if (hmacKey.length < 32) return fail(c, 503, 'ログイン照合の設定が完了していません。', 'AUTH_NOT_CONFIGURED');
+    discordIdHmac = await deriveDiscordIdHmac(hmacKey, discordUserId);
   }
-  await audit(c.env, auth.user.id, 'USER_UPDATE', 'user', userId, { role, group_id: groupId });
-  return c.json({ success: true });
-});
-
-app.get('/api/admin/discord-links', async (c) => {
-  const roleError = requireRole(c, ['admin']);
-  if (roleError) return roleError;
-  const { results } = await c.env.DB.prepare(`
-    SELECT id, username_snapshot, display_name_snapshot, requested_at
-    FROM discord_link_requests
-    WHERE status = 'pending' AND expires_at > ?
-    ORDER BY requested_at
-    LIMIT 100
-  `).bind(nowSeconds()).all();
-  return c.json({ success: true, data: results });
-});
-
-app.post('/api/admin/discord-links/:id/approve', async (c) => {
-  const roleError = requireRole(c, ['admin']);
-  if (roleError) return roleError;
-  const auth = c.get('auth');
-  const requestId = parsePositiveInteger(c.req.param('id'));
-  const body = await readJsonObject(c);
-  const userId = body ? parsePositiveInteger(body.user_id) : null;
-  const verificationCode = body ? normalizeVerificationCode(body.verification_code) : '';
-  if (!requestId || !userId || !verificationCode) return fail(c, 422, '参加者と、本人の画面に表示された確認コードを確認してください。');
-
-  const request = await c.env.DB.prepare(`
-    SELECT id, discord_user_id, verification_code_hash
-    FROM discord_link_requests
-    WHERE id = ? AND status = 'pending' AND expires_at > ?
-  `).bind(requestId, nowSeconds()).first<{ id: number; discord_user_id: string; verification_code_hash: string | null }>();
-  if (!request) return fail(c, 404, '有効な連携申請が見つかりません。');
-
-  const submittedCodeHash = await sha256Base64Url(`discord-link:${verificationCode}`);
-  if (!request.verification_code_hash || !timingSafeEqual(submittedCodeHash, request.verification_code_hash)) {
-    return fail(c, 422, '確認コードが一致しません。本人の画面を直接確認してください。');
-  }
-
-  const user = await c.env.DB.prepare(`
-    SELECT id FROM users WHERE id = ? AND is_active = 1 AND discord_user_id IS NULL
-  `).bind(userId).first<{ id: number }>();
-  if (!user) return fail(c, 409, 'この参加者は連携できない状態です。');
 
   try {
     const now = nowSeconds();
-    const results = await c.env.DB.batch([
-      c.env.DB.prepare(`
-        UPDATE users SET discord_user_id = ?, updated_at = ?
-        WHERE id = ? AND discord_user_id IS NULL
-      `).bind(request.discord_user_id, now, userId),
-      c.env.DB.prepare(`
-        UPDATE discord_link_requests
-        SET status = 'approved', linked_user_id = ?, approved_by = ?, decided_at = ?, verification_code_hash = NULL
-        WHERE id = ? AND status = 'pending'
-          AND EXISTS (
-            SELECT 1 FROM users
-            WHERE id = ? AND discord_user_id = ?
-          )
-      `).bind(userId, auth.user.id, now, requestId, userId, request.discord_user_id),
-    ]);
-
-    if (results.some((result) => result.meta.changes !== 1)) {
-      return fail(c, 409, '連携状態が更新されました。画面を再読み込みしてください。');
+    if (discordIdHmac) {
+      const results = await c.env.DB.batch([
+        c.env.DB.prepare(`
+          UPDATE users
+          SET group_id = ?, role = ?, discord_id_hmac = ?, updated_at = ?
+          WHERE id = ? AND is_active = 1 AND role != 'admin'
+        `).bind(groupId, role, discordIdHmac, now, userId),
+        c.env.DB.prepare(`
+          UPDATE auth_sessions
+          SET revoked_at = ?
+          WHERE user_id = ? AND revoked_at IS NULL
+        `).bind(now, userId),
+      ]);
+      if (results[0].meta.changes !== 1) return fail(c, 409, '参加者の状態が更新されました。画面を再読み込みしてください。');
+    } else {
+      const result = await c.env.DB.prepare(`
+        UPDATE users SET group_id = ?, role = ?, updated_at = ? WHERE id = ? AND is_active = 1
+      `).bind(groupId, role, now, userId).run();
+      if (result.meta.changes !== 1) return fail(c, 409, '参加者の状態が更新されました。画面を再読み込みしてください。');
     }
   } catch {
-    return fail(c, 409, 'このDiscordアカウントはすでに連携されています。');
+    return fail(c, 409, 'このDiscordアカウントは、すでに別の参加者へ登録されています。');
   }
-
-  await audit(c.env, auth.user.id, 'DISCORD_LINK_APPROVE', 'user', userId);
+  await audit(c.env, auth.user.id, 'USER_UPDATE', 'user', userId, { role, group_id: groupId });
+  if (discordIdHmac) await audit(c.env, auth.user.id, 'DISCORD_ALLOWLIST_UPDATE', 'user', userId);
   return c.json({ success: true });
 });
 
@@ -858,7 +943,7 @@ app.get('/api/admin/menu', async (c) => {
   const roleError = requireRole(c, ['admin']);
   if (roleError) return roleError;
   const { results } = await c.env.DB.prepare(`
-    SELECT id, category, name, size, price, is_active
+    SELECT id, category, name, size, price, is_active, is_admin_only
     FROM menu_items ORDER BY category, name, price, id
   `).all();
   return c.json({ success: true, data: results });
@@ -879,9 +964,9 @@ app.post('/api/admin/menu', async (c) => {
 
   try {
     const result = await c.env.DB.prepare(`
-      INSERT INTO menu_items (name, category, price, size, is_active)
-      VALUES (?, ?, ?, ?, 1)
-    `).bind(name, category, price, size).run();
+      INSERT INTO menu_items (name, category, price, size, is_active, is_admin_only)
+      VALUES (?, ?, ?, ?, 1, ?)
+    `).bind(name, category, price, size, category === ADMIN_ONLY_MENU_CATEGORY ? 1 : 0).run();
     const menuId = Number(result.meta.last_row_id);
     await audit(c.env, auth.user.id, 'MENU_CREATE', 'menu_item', menuId, { price });
     return c.json({ success: true, data: { menu_id: menuId } });

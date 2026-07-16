@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest, getErrorMessage, resolveApiUrl } from '../lib/api';
 import { formatDateTime, formatYen, orderTotal } from '../lib/format';
+import { createRequestId } from '../lib/requestId';
 import { EmptyState, Field, LoadingState, ScreenIntro, StatusNotice } from './States';
 
 const ADMIN_TABS = [
@@ -17,6 +18,8 @@ const ROLE_OPTIONS = [
   { value: 'manager', label: '担当者' },
   { value: 'admin', label: '管理者' },
 ];
+const ASSIGNABLE_ROLE_OPTIONS = ROLE_OPTIONS.filter((option) => option.value !== 'admin');
+const BANQUET_CATEGORY = '宴会コース';
 
 const DEFAULT_GROUPS = ['Aグループ', 'あグループ'];
 const EMPTY_STATS = { total_users: 0, total_orders: 0, total_cancels: 0, total_sales: 0 };
@@ -25,8 +28,11 @@ const AUDIT_LABELS = {
   AUTH_LOGIN: 'ログイン',
   AUTH_LOGOUT: 'ログアウト',
   AUTH_BOOTSTRAP_LINK: '初回管理者連携',
-  DISCORD_LINK_APPROVE: 'Discord連携承認',
+  DISCORD_ALLOWLIST_UPDATE: 'Discordログイン許可変更',
+  DISCORD_ALLOWLIST_REVOKE: 'Discordログイン許可解除',
   ORDER_CREATE: '注文作成',
+  ADMIN_ORDER_CREATE: '管理者による注文追加',
+  ADMIN_ORDER_CANCEL: '管理者による事前追加の訂正',
   ORDER_QUANTITY_UPDATE: '注文個数変更',
   ORDER_STATUS_UPDATE: '注文伝達済み',
   USER_CREATE: '参加者追加',
@@ -69,20 +75,26 @@ export default function AdminDashboard() {
 
   const [orders, setOrders] = useState([]);
   const [users, setUsers] = useState([]);
-  const [discordLinks, setDiscordLinks] = useState([]);
   const [adminMenu, setAdminMenu] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
   const [stats, setStats] = useState(EMPTY_STATS);
   const [loadedTabs, setLoadedTabs] = useState([]);
 
   const [editingUserId, setEditingUserId] = useState(null);
-  const [userDraft, setUserDraft] = useState({ group_id: '', role: 'member' });
+  const [userDraft, setUserDraft] = useState({ group_id: '', role: 'member', discord_user_id: '' });
   const [userActions, setUserActions] = useState({});
-  const [newUser, setNewUser] = useState({ name: '', group_id: '', role: 'member' });
+  const [newUser, setNewUser] = useState({ name: '', group_id: '', role: 'member', discord_user_id: '' });
   const [newUserState, setNewUserState] = useState({ busy: false, error: '' });
-  const [linkSelections, setLinkSelections] = useState({});
-  const [linkCodes, setLinkCodes] = useState({});
-  const [linkActions, setLinkActions] = useState({});
+
+  const [adminOrder, setAdminOrder] = useState(() => ({
+    user_id: '',
+    category: BANQUET_CATEGORY,
+    menu_item_id: '',
+    quantity: '1',
+    request_id: createRequestId('admin'),
+  }));
+  const [adminOrderState, setAdminOrderState] = useState({ busy: false, error: '' });
+  const [busyAdminOrderId, setBusyAdminOrderId] = useState(null);
 
   const [selectedCategory, setSelectedCategory] = useState('すべて');
   const [showAddMenu, setShowAddMenu] = useState(false);
@@ -95,15 +107,17 @@ export default function AdminDashboard() {
         const payload = await apiRequest('/api/admin/stats');
         setStats(payload?.data || EMPTY_STATS);
       } else if (tabId === 'people') {
-        const [payload, linksPayload] = await Promise.all([
-          apiRequest('/api/admin/users'),
-          apiRequest('/api/admin/discord-links'),
-        ]);
+        const payload = await apiRequest('/api/admin/users');
         setUsers(getData(payload));
-        setDiscordLinks(getData(linksPayload));
       } else if (tabId === 'orders') {
-        const payload = await apiRequest('/api/admin/orders');
-        setOrders(getData(payload));
+        const [ordersPayload, usersPayload, menuPayload] = await Promise.all([
+          apiRequest('/api/admin/orders'),
+          apiRequest('/api/admin/users'),
+          apiRequest('/api/admin/menu'),
+        ]);
+        setOrders(getData(ordersPayload));
+        setUsers(getData(usersPayload));
+        setAdminMenu(getData(menuPayload));
       } else if (tabId === 'menu') {
         const payload = await apiRequest('/api/admin/menu');
         setAdminMenu(getData(payload));
@@ -173,6 +187,24 @@ export default function AdminDashboard() {
       });
   }, [adminMenu, selectedCategory]);
 
+  const effectiveAdminOrderCategory = menuCategories.includes(adminOrder.category)
+    ? adminOrder.category
+    : menuCategories.includes(BANQUET_CATEGORY) ? BANQUET_CATEGORY : menuCategories[0] || '';
+  const adminOrderMenuOptions = adminMenu
+    .filter((item) => item.category === effectiveAdminOrderCategory && Number(item.is_active) === 1)
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), 'ja'));
+  const effectiveAdminOrderMenuId = adminOrderMenuOptions.some((item) => String(item.id) === String(adminOrder.menu_item_id))
+    ? String(adminOrder.menu_item_id)
+    : String(adminOrderMenuOptions[0]?.id || '');
+  const adminOrderUsers = users.filter((user) => user.role !== 'admin');
+  const effectiveAdminOrderUserId = adminOrderUsers.some((user) => String(user.id) === String(adminOrder.user_id))
+    ? String(adminOrder.user_id)
+    : String(adminOrderUsers[0]?.id || '');
+  const selectedAdminOrderMenu = adminOrderMenuOptions.find((item) => String(item.id) === effectiveAdminOrderMenuId);
+  const selectedAdminOrderUser = adminOrderUsers.find((user) => String(user.id) === effectiveAdminOrderUserId);
+  const selectedAdminOrderIsImmediate = Number(selectedAdminOrderMenu?.is_admin_only) === 1
+    || selectedAdminOrderMenu?.category === BANQUET_CATEGORY;
+
   const setUserAction = (id, patch) => {
     setUserActions((current) => ({
       ...current,
@@ -213,36 +245,52 @@ export default function AdminDashboard() {
 
   const startUserEdit = (user) => {
     setEditingUserId(user.id);
-    setUserDraft({ group_id: user.group_id, role: user.role });
+    setUserDraft({ group_id: user.group_id, role: user.role, discord_user_id: '' });
     setUserAction(user.id, { error: '' });
   };
 
   const cancelUserEdit = () => {
     setEditingUserId(null);
-    setUserDraft({ group_id: '', role: 'member' });
+    setUserDraft({ group_id: '', role: 'member', discord_user_id: '' });
   };
 
   const saveUser = async (user) => {
     const groupId = userDraft.group_id.trim();
-    const roleIsValid = ROLE_OPTIONS.some((option) => option.value === userDraft.role);
-    if (!groupId || !roleIsValid) {
-      setUserAction(user.id, { error: 'グループと権限を確認してください。' });
+    const discordUserId = userDraft.discord_user_id.trim();
+    const roleIsValid = user.role === 'admin'
+      ? userDraft.role === 'admin'
+      : ASSIGNABLE_ROLE_OPTIONS.some((option) => option.value === userDraft.role);
+    if (!groupId || !roleIsValid || (discordUserId && !/^\d{16,22}$/.test(discordUserId))) {
+      setUserAction(user.id, { error: 'グループ、権限、DiscordユーザーIDを確認してください。' });
       return;
     }
-    if ((user.group_id !== groupId || user.role !== userDraft.role)
-      && !window.confirm(`${user.name}さんのグループまたは権限を、この内容へ変更しますか？`)) return;
+    const changeSummary = discordUserId
+      ? 'グループ・権限・ログイン許可'
+      : 'グループまたは権限';
+    if ((user.group_id !== groupId || user.role !== userDraft.role || discordUserId)
+      && !window.confirm(`${user.name}さんの${changeSummary}を、この内容へ変更しますか？`)) return;
 
     setUserAction(user.id, { busy: true, error: '' });
     try {
       await apiRequest(`/api/admin/users/${user.id}`, {
         method: 'PATCH',
-        body: { group_id: groupId, role: userDraft.role },
+        body: {
+          group_id: groupId,
+          role: userDraft.role,
+          ...(discordUserId ? { discord_user_id: discordUserId } : {}),
+        },
       });
       setUsers((current) => current.map((item) => (
-        item.id === user.id ? { ...item, group_id: groupId, role: userDraft.role } : item
+        item.id === user.id
+          ? { ...item, group_id: groupId, role: userDraft.role, discord_registered: discordUserId ? 1 : item.discord_registered }
+          : item
       )));
       cancelUserEdit();
-      setNotice({ tone: 'success', title: '参加者情報を保存しました。' });
+      setNotice({
+        tone: 'success',
+        title: '参加者情報を保存しました。',
+        message: discordUserId ? '新しいログイン許可を登録し、以前のログイン状態を解除しました。' : '',
+      });
     } catch (error) {
       setUserAction(user.id, { error: getErrorMessage(error, '参加者情報を保存できませんでした。') });
     } finally {
@@ -256,11 +304,12 @@ export default function AdminDashboard() {
       name: newUser.name.trim(),
       group_id: selectedNewUserGroup.trim(),
       role: newUser.role,
+      discord_user_id: newUser.discord_user_id.trim(),
     };
-    const roleIsValid = ROLE_OPTIONS.some((option) => option.value === values.role);
+    const roleIsValid = ASSIGNABLE_ROLE_OPTIONS.some((option) => option.value === values.role);
 
-    if (!values.name || !values.group_id || !roleIsValid) {
-      setNewUserState({ busy: false, error: '名前、グループ、権限を確認してください。' });
+    if (!values.name || !values.group_id || !roleIsValid || !/^\d{16,22}$/.test(values.discord_user_id)) {
+      setNewUserState({ busy: false, error: '名前、グループ、権限、DiscordのユーザーIDを確認してください。' });
       return;
     }
     if (values.role !== 'member'
@@ -269,7 +318,7 @@ export default function AdminDashboard() {
     setNewUserState({ busy: true, error: '' });
     try {
       await apiRequest('/api/admin/users', { method: 'POST', body: values });
-      setNewUser((current) => ({ ...current, name: '', role: 'member' }));
+      setNewUser((current) => ({ ...current, name: '', role: 'member', discord_user_id: '' }));
       setNotice({ tone: 'success', title: '参加者を追加しました。' });
       await fetchData({ tabId: 'people' });
     } catch (error) {
@@ -279,36 +328,93 @@ export default function AdminDashboard() {
     }
   };
 
-  const approveDiscordLink = async (request) => {
-    const userId = Number(linkSelections[request.id]);
-    const verificationCode = String(linkCodes[request.id] || '').toUpperCase().replace(/[\s-]/g, '');
-    if (!Number.isInteger(userId) || userId <= 0) {
-      setLinkActions((current) => ({ ...current, [request.id]: { error: '結び付ける参加者を選んでください。' } }));
-      return;
-    }
-    if (!/^[A-HJ-NP-Z2-9]{8}$/.test(verificationCode)) {
-      setLinkActions((current) => ({ ...current, [request.id]: { error: '本人の画面に表示された8文字の確認コードを入力してください。' } }));
-      return;
-    }
-    const user = users.find((item) => Number(item.id) === userId);
-    if (!user || !window.confirm(`本人の画面と確認コードが一致していますか？\nDiscordの「${request.display_name_snapshot}」を、参加者「${user.name}」へ結び付けます。`)) return;
+  const revokeDiscordAccess = async (user) => {
+    if (!window.confirm(`${user.name}さんのログイン許可を解除しますか？ 現在ログイン中の端末もログアウトされます。`)) return;
 
-    setLinkActions((current) => ({ ...current, [request.id]: { busy: true, error: '' } }));
+    setUserAction(user.id, { busy: true, error: '' });
     try {
-      await apiRequest(`/api/admin/discord-links/${request.id}/approve`, {
-        method: 'POST',
-        body: { user_id: userId, verification_code: verificationCode },
+      await apiRequest(`/api/admin/users/${user.id}/discord-access/revoke`, { method: 'POST' });
+      setUsers((current) => current.map((item) => (
+        item.id === user.id ? { ...item, discord_registered: 0 } : item
+      )));
+      setNotice({
+        tone: 'success',
+        title: `${user.name}さんのログイン許可を解除しました。`,
+        message: '再び許可するときは編集画面から本人確認済みのDiscordユーザーIDを登録してください。',
       });
-      setLinkCodes((current) => ({ ...current, [request.id]: '' }));
-      setNotice({ tone: 'success', title: `${user.name}さんのDiscord連携を完了しました。` });
-      await fetchData({ tabId: 'people' });
     } catch (error) {
-      setLinkActions((current) => ({
-        ...current,
-        [request.id]: { busy: false, error: getErrorMessage(error, 'Discord連携を完了できませんでした。') },
-      }));
+      setUserAction(user.id, { error: getErrorMessage(error, 'ログイン許可を解除できませんでした。') });
     } finally {
-      setLinkActions((current) => ({ ...current, [request.id]: { ...current[request.id], busy: false } }));
+      setUserAction(user.id, { busy: false });
+    }
+  };
+
+  const addOrderForUser = async (event) => {
+    event.preventDefault();
+    const quantity = Number(adminOrder.quantity);
+    if (!selectedAdminOrderUser || !selectedAdminOrderMenu || !Number.isInteger(quantity) || quantity < 1 || quantity > 20) {
+      setAdminOrderState({ busy: false, error: '参加者、メニュー、個数を確認してください。' });
+      return;
+    }
+
+    const statusLabel = selectedAdminOrderIsImmediate
+      ? '注文済みとして事前加算'
+      : '担当者の確認待ちとして追加';
+    if (!window.confirm(`${selectedAdminOrderUser.name}さんへ「${selectedAdminOrderMenu.name}」を${quantity}点、${statusLabel}しますか？`)) return;
+
+    setAdminOrderState({ busy: true, error: '' });
+    try {
+      await apiRequest(`/api/admin/users/${selectedAdminOrderUser.id}/orders`, {
+        method: 'POST',
+        body: {
+          menu_item_id: selectedAdminOrderMenu.id,
+          quantity,
+          request_id: adminOrder.request_id,
+        },
+      });
+      setAdminOrder((current) => ({
+        ...current,
+        quantity: '1',
+        request_id: createRequestId('admin'),
+      }));
+      setNotice({
+        tone: 'success',
+        title: `${selectedAdminOrderUser.name}さんへ注文を追加しました。`,
+        message: selectedAdminOrderIsImmediate
+          ? '利用者の注文履歴には「管理者が事前に追加」と表示され、金額へ加算されます。'
+          : '担当者が店員へ伝える注文として追加されました。',
+      });
+      await fetchData({ tabId: 'orders' });
+    } catch (error) {
+      setAdminOrderState({ busy: false, error: getErrorMessage(error, '注文を追加できませんでした。') });
+    } finally {
+      setAdminOrderState((current) => ({ ...current, busy: false }));
+    }
+  };
+
+  const cancelAdminAddedOrder = async (order) => {
+    if (busyAdminOrderId !== null) return;
+    if (!window.confirm(`${order.user_name}さんへ事前追加した「${order.item_name}」を訂正し、合計から除外しますか？`)) return;
+
+    setBusyAdminOrderId(order.id);
+    try {
+      await apiRequest(`/api/admin/orders/${order.id}/cancel`, { method: 'POST' });
+      setOrders((current) => current.map((item) => (
+        item.id === order.id ? { ...item, status: 'cancelled' } : item
+      )));
+      setNotice({
+        tone: 'success',
+        title: '事前追加した注文を訂正しました。',
+        message: '利用者の注文履歴にも取消済みとして残り、合計から除外されます。',
+      });
+    } catch (error) {
+      setNotice({
+        tone: 'danger',
+        title: '事前追加した注文を訂正できませんでした。',
+        message: getErrorMessage(error),
+      });
+    } finally {
+      setBusyAdminOrderId(null);
     }
   };
 
@@ -413,8 +519,8 @@ export default function AdminDashboard() {
                   <div className="admin-person-summary">
                     <strong className="admin-person-name">{user.name}</strong>
                     <span className="admin-person-meta">{user.group_id}・{ROLE_OPTIONS.find((option) => option.value === user.role)?.label || '権限不明'}</span>
-                    <span className={user.discord_linked ? 'admin-link-state is-linked' : 'admin-link-state'}>
-                      {user.discord_linked ? 'Discord連携済み' : 'Discord未連携'}
+                    <span className={user.discord_registered ? 'admin-link-state is-linked' : 'admin-link-state'}>
+                      {user.discord_registered ? 'ログイン許可済み' : 'ログインID未登録'}
                     </span>
                     <span className="admin-person-total">利用額 {formatYen(user.total_spent)}</span>
                   </div>
@@ -437,11 +543,27 @@ export default function AdminDashboard() {
                             className="admin-select"
                             value={userDraft.role}
                             onChange={(event) => setUserDraft((current) => ({ ...current, role: event.target.value }))}
-                            disabled={action.busy}
+                            disabled={action.busy || user.role === 'admin'}
                           >
-                            {ROLE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                            {(user.role === 'admin' ? ROLE_OPTIONS.filter((option) => option.value === 'admin') : ASSIGNABLE_ROLE_OPTIONS)
+                              .map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                           </select>
                         </Field>
+                        {user.role !== 'admin' && (
+                          <Field label="DiscordのユーザーID" hint="変更するときだけ入力します">
+                            <input
+                              className="admin-input"
+                              value={userDraft.discord_user_id}
+                              onChange={(event) => setUserDraft((current) => ({ ...current, discord_user_id: event.target.value.replace(/\D/g, '') }))}
+                              inputMode="numeric"
+                              autoComplete="off"
+                              minLength={16}
+                              maxLength={22}
+                              placeholder="数字16〜22桁"
+                              disabled={action.busy}
+                            />
+                          </Field>
+                        )}
                       </div>
                       {action.error && <StatusNotice tone="danger" title="保存できませんでした" live>{action.error}</StatusNotice>}
                       <div className="admin-row-actions">
@@ -454,77 +576,16 @@ export default function AdminDashboard() {
                   ) : (
                     <div className="admin-row-actions">
                       <button type="button" className="admin-button admin-button-secondary" onClick={() => startUserEdit(user)} disabled={action.busy}>編集</button>
+                      {user.role !== 'admin' && Number(user.discord_registered) === 1 && (
+                        <button type="button" className="admin-button admin-button-danger-subtle" onClick={() => revokeDiscordAccess(user)} disabled={action.busy}>
+                          {action.busy ? '解除しています' : 'ログイン許可を解除'}
+                        </button>
+                      )}
                       <button type="button" className="admin-button admin-button-disabled" disabled>削除は準備中</button>
                     </div>
                   )}
 
                   {!isEditing && action.error && <StatusNotice tone="danger" title="操作できませんでした" live>{action.error}</StatusNotice>}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
-
-      <section className="admin-panel" aria-labelledby="admin-discord-links-heading">
-        <div className="admin-panel-heading">
-          <div>
-            <p className="admin-eyebrow">初回ログイン</p>
-            <h2 id="admin-discord-links-heading">Discordの本人確認を参加者へ結び付ける</h2>
-          </div>
-          <p className="admin-panel-description">本人のスマホに出た確認コードを直接見て入力し、登録済みの参加者を選びます。</p>
-        </div>
-
-        {discordLinks.length === 0 ? (
-          <StatusNotice tone="info" title="現在、連携待ちはありません">
-            参加者が初めて「Discordでログイン」を押すと、ここに表示されます。
-          </StatusNotice>
-        ) : (
-          <ul className="admin-list discord-link-list">
-            {discordLinks.map((request) => {
-              const action = linkActions[request.id] || {};
-              const availableUsers = users.filter((user) => !user.discord_linked);
-              return (
-                <li key={request.id} className="admin-list-item discord-link-item">
-                  <div>
-                    <strong>{request.display_name_snapshot}</strong>
-                    <span>Discord名：{request.username_snapshot}</span>
-                  </div>
-                  <Field label="結び付ける参加者" required>
-                    <select
-                      className="admin-select"
-                      value={linkSelections[request.id] || ''}
-                      onChange={(event) => setLinkSelections((current) => ({ ...current, [request.id]: event.target.value }))}
-                      disabled={action.busy}
-                    >
-                      <option value="">参加者を選ぶ</option>
-                      {availableUsers.map((user) => (
-                        <option key={user.id} value={user.id}>{user.name}（{user.group_id}）</option>
-                      ))}
-                    </select>
-                  </Field>
-                  <Field label="本人の画面の確認コード" hint="例：ABCD-EFGH" required>
-                    <input
-                      className="admin-input discord-code-input"
-                      value={linkCodes[request.id] || ''}
-                      onChange={(event) => setLinkCodes((current) => ({ ...current, [request.id]: event.target.value.toUpperCase() }))}
-                      inputMode="text"
-                      autoCapitalize="characters"
-                      autoComplete="off"
-                      maxLength={9}
-                      placeholder="ABCD-EFGH"
-                      disabled={action.busy}
-                    />
-                  </Field>
-                  <button
-                    type="button"
-                    className="admin-button admin-button-primary"
-                    onClick={() => approveDiscordLink(request)}
-                    disabled={action.busy || availableUsers.length === 0}
-                  >
-                    {action.busy ? '連携しています' : 'この参加者へ連携'}
-                  </button>
-                  {action.error && <StatusNotice tone="danger" title="連携できませんでした" live>{action.error}</StatusNotice>}
                 </li>
               );
             })}
@@ -538,8 +599,11 @@ export default function AdminDashboard() {
             <p className="admin-eyebrow">新規登録</p>
             <h2 id="admin-add-person-heading">参加者を追加する</h2>
           </div>
-          <p className="admin-panel-description">追加後、本人がDiscordで初回ログインしたら、上の欄で結び付けます。</p>
+          <p className="admin-panel-description">先にDiscordのユーザーIDを登録します。未登録アカウントはログインできません。</p>
         </div>
+        <StatusNotice tone="info" title="DiscordのIDそのものは保存しません">
+          入力したIDは照合用HMACへ変換後に破棄します。画面・操作履歴・D1へIDそのものやプロフィールは残りません。
+        </StatusNotice>
         <form className="admin-form" onSubmit={addUser}>
           <div className="admin-form-grid">
             <Field label="参加者名" required>
@@ -568,8 +632,21 @@ export default function AdminDashboard() {
                 onChange={(event) => setNewUser((current) => ({ ...current, role: event.target.value }))}
                 disabled={newUserState.busy}
               >
-                {ROLE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                {ASSIGNABLE_ROLE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
+            </Field>
+            <Field label="DiscordのユーザーID" hint="Discordでプロフィールを長押しし「ユーザーIDをコピー」" required>
+              <input
+                className="admin-input"
+                value={newUser.discord_user_id}
+                onChange={(event) => setNewUser((current) => ({ ...current, discord_user_id: event.target.value.replace(/\D/g, '') }))}
+                inputMode="numeric"
+                autoComplete="off"
+                minLength={16}
+                maxLength={22}
+                placeholder="数字16〜22桁"
+                disabled={newUserState.busy}
+              />
             </Field>
           </div>
           {newUserState.error && <StatusNotice tone="danger" title="追加できませんでした" live>{newUserState.error}</StatusNotice>}
@@ -584,45 +661,145 @@ export default function AdminDashboard() {
   );
 
   const renderOrders = () => (
-    <section className="admin-panel" aria-labelledby="admin-orders-heading">
-      <div className="admin-panel-heading">
-        <div>
-          <p className="admin-eyebrow">注文確認</p>
-          <h2 id="admin-orders-heading">注文一覧</h2>
+    <div className="admin-section-stack">
+      <section className="admin-panel admin-order-add-panel" aria-labelledby="admin-add-order-heading">
+        <div className="admin-panel-heading">
+          <div>
+            <p className="admin-eyebrow">事前に加算</p>
+            <h2 id="admin-add-order-heading">利用者へ注文を追加する</h2>
+          </div>
+          <p className="admin-panel-description">宴会コースなど、本人の操作が不要な注文を管理者が追加できます。</p>
         </div>
-        <p className="admin-panel-description">現在登録されている注文を確認できます。</p>
-      </div>
-      <div id="admin-order-cancel-unavailable">
-        <StatusNotice tone="warning" title="この画面からの注文取消は現在利用できません">
-          安全に取消履歴を残すAPIが未実装です。担当者へ直接確認してください。
-        </StatusNotice>
-      </div>
 
-      {orders.length === 0 ? (
-        <EmptyState symbol="注" title="注文はありません" description="注文が入るとこの画面に表示されます。" />
-      ) : (
-        <ul className="admin-list admin-order-list">
-          {orders.map((order) => (
-            <li key={order.id} className="admin-list-item admin-order-item">
-              <div className="admin-order-copy">
-                <strong>{order.item_name}</strong>
-                <span>{order.user_name}・{order.group_id}</span>
-                <span>{order.size} × {formatCount(order.quantity)}</span>
-              </div>
-              <div className="admin-order-total">{formatYen(orderTotal(order))}</div>
-              <button
-                type="button"
-                className="admin-button admin-button-disabled"
-                disabled
-                aria-describedby="admin-order-cancel-unavailable"
+        <StatusNotice tone="info" title="宴会コースはそのまま会計へ加算されます">
+          宴会コースは事前に店へ伝えてあるため「注文済み」で追加します。それ以外は担当者の確認待ちになります。
+        </StatusNotice>
+
+        <form className="admin-form" onSubmit={addOrderForUser} aria-busy={adminOrderState.busy}>
+          <div className="admin-form-grid">
+            <Field label="追加する利用者" required>
+              <select
+                className="admin-select"
+                value={effectiveAdminOrderUserId}
+                onChange={(event) => setAdminOrder((current) => ({ ...current, user_id: event.target.value }))}
+                disabled={adminOrderState.busy || adminOrderUsers.length === 0}
               >
-                取消は利用停止中
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
+                {adminOrderUsers.length === 0 && <option value="">利用者がいません</option>}
+                {adminOrderUsers.map((user) => <option key={user.id} value={user.id}>{user.name}（{user.group_id}）</option>)}
+              </select>
+            </Field>
+            <Field label="カテゴリー" required>
+              <select
+                className="admin-select"
+                value={effectiveAdminOrderCategory}
+                onChange={(event) => setAdminOrder((current) => ({ ...current, category: event.target.value, menu_item_id: '' }))}
+                disabled={adminOrderState.busy || menuCategories.length === 0}
+              >
+                {menuCategories.length === 0 && <option value="">メニューがありません</option>}
+                {menuCategories.map((category) => <option key={category} value={category}>{category}</option>)}
+              </select>
+            </Field>
+            <Field label="メニュー" required>
+              <select
+                className="admin-select"
+                value={effectiveAdminOrderMenuId}
+                onChange={(event) => setAdminOrder((current) => ({ ...current, menu_item_id: event.target.value }))}
+                disabled={adminOrderState.busy || adminOrderMenuOptions.length === 0}
+              >
+                {adminOrderMenuOptions.length === 0 && <option value="">選べるメニューがありません</option>}
+                {adminOrderMenuOptions.map((item) => (
+                  <option key={item.id} value={item.id}>{item.name}・{item.size}・{formatYen(item.price)}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="個数" hint="1〜20点" required>
+              <input
+                className="admin-input"
+                type="number"
+                min="1"
+                max="20"
+                step="1"
+                inputMode="numeric"
+                value={adminOrder.quantity}
+                onChange={(event) => setAdminOrder((current) => ({ ...current, quantity: event.target.value }))}
+                disabled={adminOrderState.busy}
+              />
+            </Field>
+          </div>
+
+          {selectedAdminOrderMenu && selectedAdminOrderUser && (
+            <div className="admin-order-preview" aria-live="polite">
+              <span>{selectedAdminOrderUser.name}さんへ追加</span>
+              <strong>{selectedAdminOrderMenu.name} × {formatCount(adminOrder.quantity)}</strong>
+              <b>{formatYen(Number(selectedAdminOrderMenu.price || 0) * Math.max(0, Number(adminOrder.quantity) || 0))}</b>
+            </div>
+          )}
+          {adminOrderState.error && <StatusNotice tone="danger" title="注文を追加できませんでした" live>{adminOrderState.error}</StatusNotice>}
+          <div className="admin-form-actions">
+            <button
+              type="submit"
+              className="admin-button admin-button-primary"
+              disabled={adminOrderState.busy || !selectedAdminOrderUser || !selectedAdminOrderMenu}
+            >
+              {adminOrderState.busy ? '追加しています' : 'この注文を利用者へ追加'}
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section className="admin-panel" aria-labelledby="admin-orders-heading">
+        <div className="admin-panel-heading">
+          <div>
+            <p className="admin-eyebrow">注文確認</p>
+            <h2 id="admin-orders-heading">注文一覧</h2>
+          </div>
+          <p className="admin-panel-description">現在登録されている注文を確認できます。</p>
+        </div>
+        <div id="admin-order-cancel-policy">
+          <StatusNotice tone="info" title="管理者が事前追加した注文だけ訂正できます">
+            入力を誤った場合は「事前追加を訂正」を押してください。参加者本人の注文を取り消す場合は、従来どおり担当者へ直接確認してください。
+          </StatusNotice>
+        </div>
+
+        {orders.length === 0 ? (
+          <EmptyState symbol="注" title="注文はありません" description="注文が入るとこの画面に表示されます。" />
+        ) : (
+          <ul className="admin-list admin-order-list">
+            {orders.map((order) => (
+              <li key={order.id} className={`admin-list-item admin-order-item${order.status === 'cancelled' ? ' is-cancelled' : ''}`}>
+                <div className="admin-order-copy">
+                  <strong>{order.item_name}</strong>
+                  <span>{order.user_name}・{order.group_id}</span>
+                  <span>{order.size} × {formatCount(order.quantity)}</span>
+                  {Number(order.added_by_admin) === 1 && <small className="admin-source-label">管理者が事前追加</small>}
+                  {order.status === 'cancelled' && <small className="admin-source-label is-cancelled">取消済み・合計対象外</small>}
+                </div>
+                <div className="admin-order-total">{formatYen(orderTotal(order))}</div>
+                {Number(order.added_by_admin) === 1 && order.status !== 'cancelled' ? (
+                  <button
+                    type="button"
+                    className="admin-button admin-button-danger"
+                    disabled={busyAdminOrderId !== null}
+                    onClick={() => cancelAdminAddedOrder(order)}
+                  >
+                    {busyAdminOrderId === order.id ? '訂正しています' : '事前追加を訂正'}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="admin-button admin-button-disabled"
+                    disabled
+                    aria-describedby="admin-order-cancel-policy"
+                  >
+                    {order.status === 'cancelled' ? '取消済み' : '取消は利用停止中'}
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </div>
   );
 
   const renderMenu = () => (

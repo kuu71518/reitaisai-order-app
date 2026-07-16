@@ -5,6 +5,8 @@ workers_dev = false
 
 # Worker name, route pattern, FRONTEND_URL, DISCORD_CLIENT_ID, and database_id
 # must all use different values in staging and production.
+# DISCORD_CLIENT_SECRET, DISCORD_ID_HMAC_KEY, and the temporary bootstrap ID
+# must be registered with `wrangler secret put`; never add them to this file.
 
 [env.staging]
 name = "replace-with-staging-worker-name"

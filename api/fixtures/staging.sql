@@ -13,4 +13,5 @@ WHERE NOT EXISTS (SELECT 1 FROM users WHERE name = '参加テスト' AND group_i
 
 INSERT OR IGNORE INTO menu_items (category, name, size, price) VALUES
 ('テスト', 'テスト用ソフトドリンク', '普通', 300),
-('テスト', 'テスト用フード', '普通', 500);
+('テスト', 'テスト用フード', '普通', 500),
+('宴会コース', 'テスト用事前コース', '1名分', 5000);

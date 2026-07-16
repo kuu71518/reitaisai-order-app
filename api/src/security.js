@@ -1,5 +1,4 @@
 const encoder = new TextEncoder();
-const VERIFICATION_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 export const USER_ROLES = Object.freeze(['member', 'manager', 'admin']);
 export const ORDER_STATUSES = Object.freeze(['pending', 'ordered', 'cancelled']);
@@ -21,21 +20,26 @@ export function randomToken(byteLength = 32) {
   return bytesToBase64Url(bytes);
 }
 
-export function createVerificationCode() {
-  const bytes = new Uint8Array(8);
-  crypto.getRandomValues(bytes);
-  return [...bytes].map((byte) => VERIFICATION_CODE_ALPHABET[byte & 31]).join('');
-}
-
-export function normalizeVerificationCode(value) {
-  if (typeof value !== 'string') return '';
-  const normalized = value.toUpperCase().replace(/[\s-]/g, '');
-  return /^[A-HJ-NP-Z2-9]{8}$/.test(normalized) ? normalized : '';
-}
-
 export async function sha256Base64Url(value) {
   const digest = await crypto.subtle.digest('SHA-256', encoder.encode(value));
   return bytesToBase64Url(new Uint8Array(digest));
+}
+
+export async function deriveDiscordIdHmac(secret, discordUserId) {
+  if (typeof secret !== 'string' || secret.length < 32 || !isDiscordSnowflake(discordUserId)) return '';
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const signature = await crypto.subtle.sign(
+    'HMAC',
+    key,
+    encoder.encode(`discord-user-id:v1:${discordUserId}`),
+  );
+  return `v1.${bytesToBase64Url(new Uint8Array(signature))}`;
 }
 
 export function timingSafeEqual(left, right) {
@@ -44,6 +48,11 @@ export function timingSafeEqual(left, right) {
   const rightBytes = encoder.encode(right);
   if (leftBytes.length !== rightBytes.length) return false;
 
+  if (typeof crypto.subtle.timingSafeEqual === 'function') {
+    return crypto.subtle.timingSafeEqual(leftBytes, rightBytes);
+  }
+
+  // Node's Web Crypto used by local tests may not expose timingSafeEqual yet.
   let difference = 0;
   for (let index = 0; index < leftBytes.length; index += 1) {
     difference |= leftBytes[index] ^ rightBytes[index];
@@ -80,6 +89,10 @@ export function isUnsafeMethod(method) {
 
 export function isUserRole(value) {
   return USER_ROLES.includes(value);
+}
+
+export function isAssignableUserRole(value) {
+  return value === 'member' || value === 'manager';
 }
 
 export function isOrderStatus(value) {

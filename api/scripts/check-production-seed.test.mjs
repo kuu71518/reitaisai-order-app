@@ -19,16 +19,16 @@ function expectCode(sql, code) {
 }
 
 test('accepts one active admin and at least one menu item', () => {
-  assert.deepEqual(validateProductionSeed(VALID_SEED), { activeAdminCount: 1, menuItemCount: 1 });
+  assert.deepEqual(validateProductionSeed(VALID_SEED), { adminCount: 1, activeAdminCount: 1, menuItemCount: 1 });
 });
 
-test('accepts inactive additional admins without counting them', () => {
+test('rejects an additional inactive administrator account', () => {
   const sql = VALID_SEED.replace(
     "('一般参加', 'Aグループ', 'member')",
     "('旧管理', '管理', 'admin', 0)",
   ).replace('(name, group_id, role)', '(name, group_id, role, is_active)')
     .replace("('本番管理', '管理', 'admin'),", "('本番管理', '管理', 'admin', 1),");
-  assert.equal(validateProductionSeed(sql).activeAdminCount, 1);
+  expectCode(sql, 'admin_count');
 });
 
 test('rejects placeholders even when left in a comment', () => {
@@ -49,6 +49,16 @@ test('rejects zero or multiple active admins', () => {
 
 test('rejects a seed without menu rows', () => {
   expectCode(VALID_SEED.replace(/INSERT INTO menu_items[\s\S]+;/u, ''), 'menu_count');
+});
+
+test('requires banquet courses to be marked administrator-only', () => {
+  const banquetWithoutFlag = VALID_SEED.replace("('料理', '唐揚げ', '通常', 800)", "('宴会コース', '事前コース', '1名分', 5000)");
+  expectCode(banquetWithoutFlag, 'banquet_visibility');
+
+  const banquetWithFlag = banquetWithoutFlag
+    .replace('(category, name, size, price)', '(category, name, size, price, is_admin_only)')
+    .replace("('宴会コース', '事前コース', '1名分', 5000)", "('宴会コース', '事前コース', '1名分', 5000, 1)");
+  assert.equal(validateProductionSeed(banquetWithFlag).menuItemCount, 1);
 });
 
 test('rejects statements whose effects cannot be checked statically', () => {
