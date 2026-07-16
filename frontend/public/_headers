@@ -1,3 +1,10 @@
+/*
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  Permissions-Policy: camera=(), geolocation=(), microphone=()
+  Content-Security-Policy: base-uri 'self'; frame-ancestors 'none'; object-src 'none'
+
 /sw.js
   Cache-Control: no-cache, no-store, must-revalidate
 
