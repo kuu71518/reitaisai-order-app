@@ -440,31 +440,6 @@
   padding: 10px 12px;
 }
 
-.discord-verification-code {
-  display: grid;
-  justify-items: center;
-  gap: 4px;
-  margin: 16px 0;
-  border: 2px solid var(--gold);
-  border-radius: 13px;
-  background: var(--gold-soft);
-  padding: 14px;
-  text-align: center;
-}
-
-.discord-verification-code > span,
-.discord-verification-code > small {
-  color: var(--muted);
-  font-size: 0.8rem;
-}
-
-.discord-verification-code > strong {
-  color: var(--indigo);
-  font-size: clamp(1.65rem, 9vw, 2.2rem);
-  letter-spacing: 0.08em;
-  line-height: 1.15;
-}
-
 .discord-privacy-note strong {
   color: var(--indigo);
   font-size: 0.8rem;

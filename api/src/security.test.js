@@ -2,14 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   cleanText,
-  createVerificationCode,
+  deriveDiscordIdHmac,
   deriveCsrfToken,
   hasRole,
+  isAssignableUserRole,
   isAllowedOrigin,
   isClientRequestId,
   isDiscordSnowflake,
   isUnsafeMethod,
-  normalizeVerificationCode,
   parseAllowedOrigins,
   parsePositiveInteger,
   randomToken,
@@ -30,11 +30,18 @@ test('session and CSRF digests are stable but separated', async () => {
   assert.notEqual(await sha256Base64Url(token), await deriveCsrfToken(token));
 });
 
-test('verification codes are easy to read and normalize safely', () => {
-  const code = createVerificationCode();
-  assert.match(code, /^[A-HJ-NP-Z2-9]{8}$/);
-  assert.equal(normalizeVerificationCode(`${code.slice(0, 4)}-${code.slice(4).toLowerCase()}`), code);
-  assert.equal(normalizeVerificationCode('IIII-0000'), '');
+test('Discord IDs use a versioned keyed HMAC without retaining the source value', async () => {
+  const id = '123456789012345678';
+  const firstKey = 'first-test-key-with-at-least-32-characters';
+  const secondKey = 'second-test-key-with-at-least-32-characters';
+  const first = await deriveDiscordIdHmac(firstKey, id);
+
+  assert.match(first, /^v1\.[A-Za-z0-9_-]{43}$/);
+  assert.equal(first.includes(id), false);
+  assert.equal(await deriveDiscordIdHmac(firstKey, id), first);
+  assert.notEqual(await deriveDiscordIdHmac(secondKey, id), first);
+  assert.equal(await deriveDiscordIdHmac('short-key', id), '');
+  assert.equal(await deriveDiscordIdHmac(firstKey, 'not-an-id'), '');
 });
 
 test('timingSafeEqual rejects mismatches', () => {
@@ -54,6 +61,8 @@ test('origin allowlist accepts exact configured origins only', () => {
 test('authorization and input helpers reject client-controlled invalid values', () => {
   assert.equal(hasRole('manager', ['manager', 'admin']), true);
   assert.equal(hasRole('member', ['manager', 'admin']), false);
+  assert.equal(isAssignableUserRole('manager'), true);
+  assert.equal(isAssignableUserRole('admin'), false);
   assert.equal(isUnsafeMethod('PATCH'), true);
   assert.equal(isUnsafeMethod('GET'), false);
   assert.equal(isDiscordSnowflake('123456789012345678'), true);

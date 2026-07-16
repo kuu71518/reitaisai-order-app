@@ -9,6 +9,7 @@ export type Bindings = {
   DISCORD_CLIENT_ID?: string;
   DISCORD_CLIENT_SECRET?: string;
   DISCORD_REDIRECT_URI?: string;
+  DISCORD_ID_HMAC_KEY?: string;
   BOOTSTRAP_ADMIN_DISCORD_USER_ID?: string;
 };
 

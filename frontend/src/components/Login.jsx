@@ -3,10 +3,10 @@ import { getDiscordLoginUrl } from '../lib/api';
 import { StatusNotice } from './States';
 
 const AUTH_MESSAGES = {
-  pending: {
-    tone: 'info',
-    title: '管理者の連携待ちです',
-    message: '本人確認は完了しました。下の確認コードをスタッフへ直接見せてください。',
+  not_registered: {
+    tone: 'warning',
+    title: 'このアカウントは利用登録されていません',
+    message: '管理者へDiscordのユーザーIDを登録してもらってから、もう一度ログインしてください。',
   },
   cancelled: {
     tone: 'warning',
@@ -33,22 +33,8 @@ function readAuthResult() {
   }
 }
 
-function readVerificationCode() {
-  try {
-    const code = new URLSearchParams(window.location.hash.replace(/^#/, '')).get('code') || '';
-    return /^[A-HJ-NP-Z2-9]{8}$/.test(code) ? code : '';
-  } catch {
-    return '';
-  }
-}
-
-function formatVerificationCode(code) {
-  return code ? `${code.slice(0, 4)}-${code.slice(4)}` : '';
-}
-
 export default function Login({ notice = '', sessionError = '' }) {
   const [authResult] = useState(readAuthResult);
-  const [verificationCode] = useState(readVerificationCode);
   const [isLeaving, setIsLeaving] = useState(false);
   const authMessage = AUTH_MESSAGES[authResult];
 
@@ -85,14 +71,6 @@ export default function Login({ notice = '', sessionError = '' }) {
             {authMessage.message}
           </StatusNotice>
         )}
-        {authResult === 'pending' && verificationCode && (
-          <div className="discord-verification-code" role="status" aria-label="スタッフへ見せる確認コード">
-            <span>スタッフへ見せる番号</span>
-            <strong>{formatVerificationCode(verificationCode)}</strong>
-            <small>スタッフが連携を終えたら、下のボタンをもう一度押します。</small>
-          </div>
-        )}
-
         <ol className="discord-login-steps" aria-label="ログインの流れ">
           <li>
             <span aria-hidden="true">1</span>
@@ -117,15 +95,15 @@ export default function Login({ notice = '', sessionError = '' }) {
           aria-busy={isLeaving}
         >
           <span className="discord-button-mark" aria-hidden="true">●●</span>
-          <span>{isLeaving ? 'Discordを開いています…' : authResult === 'pending' ? '連携後にもう一度ログイン' : 'Discordでログイン'}</span>
+          <span>{isLeaving ? 'Discordを開いています…' : 'Discordでログイン'}</span>
         </a>
 
         <div className="discord-privacy-note">
           <strong>確認する情報</strong>
-          <span>DiscordのアカウントIDと表示名だけを確認します。メッセージは取得しません。</span>
+          <span>アカウントIDを一時的に照合します。IDそのもの・表示名・メッセージは保存しません。</span>
         </div>
 
-        <p className="login-help">初回だけ管理者の連携が必要です。うまく入れないときは、この画面をグループ担当者へ見せてください。</p>
+        <p className="login-help">ログインできないときは、管理者に利用登録済みか確認してください。</p>
       </main>
     </div>
   );

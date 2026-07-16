@@ -36,6 +36,8 @@
 - Previous Worker compatibility date and variable names:
 - Previous Worker DB binding name/ID:
 - Previous Worker secrets recoverable from password manager (yes/no):
+- Production HMAC key recoverable from password manager (yes/no; never record value):
+- Staging/production HMAC keys confirmed different (yes/no):
 - New production Worker version/deployment ID:
 - Previous production D1 name:
 - Previous production D1 ID:
@@ -47,7 +49,10 @@
 - New D1 pre-open Time Travel bookmark:
 - New D1 pre-open bookmark timestamp:
 - Applied migrations:
+- Migration 0003 applied at (JST/UTC or N/A):
+- Session revocation confirmed after migration 0003 (yes/no/N/A):
 - User counts by role:
+- Login-allowed user count (count only):
 - Menu counts by category:
 - Previous-system pending order count at cutover:
 - Previous-system last order ID/time:

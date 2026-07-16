@@ -1,7 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import useSWR from 'swr';
 import { apiFetcher, apiRequest, getErrorMessage } from '../lib/api';
 import { formatTime, formatYen, getOrderStatus, orderTotal } from '../lib/format';
+import { visibleMenuItemsForRole } from '../lib/menuVisibility';
+import { createRequestId } from '../lib/requestId';
+import { millisecondsUntilNextMinute, shouldShowLateNightNotice } from '../lib/time';
 import { EmptyState, LoadingState, ScreenIntro, StatusNotice } from './States';
 
 const EMPTY_ITEMS = [];
@@ -17,13 +20,6 @@ const CATEGORY_PRIORITY = [
   '食事',
 ];
 
-function createRequestId() {
-  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return `order_${[...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')}`;
-}
-
 export default function Menu({ currentUser }) {
   const [view, setView] = useState('menu');
   const [cart, setCart] = useState([]);
@@ -32,6 +28,10 @@ export default function Menu({ currentUser }) {
   const [selectedVariations, setSelectedVariations] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [feedback, setFeedback] = useState(null);
+  const [cartToast, setCartToast] = useState(null);
+  const [showLateNightNotice, setShowLateNightNotice] = useState(() => shouldShowLateNightNotice());
+  const cartToastTimer = useRef(null);
+  const cartToastSequence = useRef(0);
 
   const menuQuery = useSWR('/api/menu', apiFetcher, {
     revalidateOnFocus: true,
@@ -43,8 +43,24 @@ export default function Menu({ currentUser }) {
     { revalidateOnFocus: true, keepPreviousData: true },
   );
 
-  const menuItems = menuQuery.data?.data || EMPTY_ITEMS;
+  const menuItems = useMemo(
+    () => visibleMenuItemsForRole(menuQuery.data?.data || EMPTY_ITEMS, currentUser.role),
+    [currentUser.role, menuQuery.data?.data],
+  );
   const history = historyQuery.data?.data || EMPTY_ITEMS;
+
+  useEffect(() => {
+    let timer;
+    const updateNotice = () => {
+      const now = new Date();
+      setShowLateNightNotice(shouldShowLateNightNotice(now));
+      timer = window.setTimeout(updateNotice, millisecondsUntilNextMinute(now));
+    };
+    updateNotice();
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => () => window.clearTimeout(cartToastTimer.current), []);
 
   const categories = useMemo(() => {
     const available = [...new Set(menuItems.map((item) => item.category).filter(Boolean))];
@@ -97,6 +113,16 @@ export default function Menu({ currentUser }) {
     setFeedback({ tone, title, message });
   };
 
+  const showCartAddedToast = (item) => {
+    cartToastSequence.current += 1;
+    const toast = { id: cartToastSequence.current, message: `${item.name}（${item.size}）` };
+    setCartToast(toast);
+    window.clearTimeout(cartToastTimer.current);
+    cartToastTimer.current = window.setTimeout(() => {
+      setCartToast((current) => current?.id === toast.id ? null : current);
+    }, 2600);
+  };
+
   const addToCart = (group) => {
     if (isSubmitting) return;
     const selectedId = Number(selectedVariations[group.key] ?? group.variations[0]?.id);
@@ -105,10 +131,15 @@ export default function Menu({ currentUser }) {
       showFeedback('danger', '商品を追加できませんでした', 'サイズを選び直して、もう一度お試しください。');
       return;
     }
+    const existing = cart.find((item) => item.menu_item_id === selectedItem.id);
+    if (existing?.quantity >= 20) {
+      showFeedback('warning', 'この商品の上限は20点です', '個数はカートの確認画面で変更できます。');
+      return;
+    }
 
     setCart((current) => {
-      const existing = current.find((item) => item.menu_item_id === selectedItem.id);
-      if (existing) {
+      const currentItem = current.find((item) => item.menu_item_id === selectedItem.id);
+      if (currentItem) {
         return current.map((item) => (
           item.menu_item_id === selectedItem.id && item.quantity < 20
             ? { ...item, quantity: item.quantity + 1 }
@@ -122,7 +153,8 @@ export default function Menu({ currentUser }) {
         request_id: createRequestId(),
       }];
     });
-    showFeedback('success', 'カートに追加しました', `${selectedItem.name}（${selectedItem.size}）`);
+    setFeedback(null);
+    showCartAddedToast(selectedItem);
   };
 
   const changeQuantity = (id, delta) => {
@@ -179,6 +211,8 @@ export default function Menu({ currentUser }) {
   const switchView = (nextView) => {
     if (isSubmitting) return;
     setFeedback(null);
+    setCartToast(null);
+    window.clearTimeout(cartToastTimer.current);
     setView(nextView);
   };
 
@@ -215,7 +249,7 @@ export default function Menu({ currentUser }) {
   }
 
   return (
-    <section className="screen menu-screen">
+    <section className={`screen menu-screen${view === 'menu' ? ' has-cart-dock' : ''}`}>
       <nav className="view-switch" aria-label="注文画面の切り替え">
         <button
           type="button"
@@ -240,12 +274,28 @@ export default function Menu({ currentUser }) {
 
       {view !== 'history' && renderOrderSteps()}
 
+      {showLateNightNotice && (
+        <StatusNotice tone="warning" title="22時以降は店で10%加算されます">
+          アプリの表示価格と合計は通常時間の金額です。22時以降の注文は、会計時に店舗の深夜料金10%が加算されます。
+        </StatusNotice>
+      )}
+
       {feedback && (
         <StatusNotice tone={feedback.tone} title={feedback.title} live action={(
           <button type="button" className="notice-close" onClick={() => setFeedback(null)} aria-label="お知らせを閉じる">×</button>
         )}>
           {feedback.message}
         </StatusNotice>
+      )}
+
+      {cartToast && (
+        <div className="cart-added-toast" role="status" aria-live="polite" aria-atomic="true">
+          <span aria-hidden="true">✓</span>
+          <div>
+            <strong>カートに追加しました</strong>
+            <small>{cartToast.message}</small>
+          </div>
+        </div>
       )}
 
       {view === 'menu' && (
@@ -346,15 +396,15 @@ export default function Menu({ currentUser }) {
             />
           )}
 
-          {cart.length > 0 && (
-            <div className="cart-dock" role="region" aria-label="カートの内容">
-              <div>
-                <span>{cartSummary.units}点を選択中</span>
-                <strong>{formatYen(cartSummary.total)}</strong>
-              </div>
-              <button type="button" onClick={() => switchView('review')}>内容を確認する</button>
+          <div className="cart-dock" role="region" aria-label="カート">
+            <div>
+              <span>{cartSummary.units > 0 ? `${cartSummary.units}点を選択中` : 'カートは空です'}</span>
+              <strong>{cartSummary.units > 0 ? formatYen(cartSummary.total) : '商品を選んでください'}</strong>
             </div>
-          )}
+            <button type="button" onClick={() => switchView('review')} disabled={cartSummary.units === 0}>
+              {cartSummary.units > 0 ? 'カートを見る' : 'まだ選ばれていません'}
+            </button>
+          </div>
         </>
       )}
 
@@ -480,6 +530,7 @@ export default function Menu({ currentUser }) {
                           <div>
                             <strong>{order.item_name}</strong>
                             <span>{order.size}・{formatYen(order.price)} × {order.quantity}</span>
+                            {Number(order.added_by_admin) === 1 && <small className="history-source-note">管理者が事前に追加しました</small>}
                           </div>
                           <strong>{formatYen(orderTotal(order))}</strong>
                         </div>

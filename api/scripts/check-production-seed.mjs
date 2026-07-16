@@ -223,6 +223,7 @@ export function validateProductionSeed(text) {
   }
 
   const statements = splitStatements(stripComments(text));
+  let adminCount = 0;
   let activeAdminCount = 0;
   let menuItemCount = 0;
 
@@ -234,6 +235,18 @@ export function validateProductionSeed(text) {
     }
 
     if (insert.table === 'menu_items') {
+      const categoryIndex = insert.columns.indexOf('category');
+      const adminOnlyIndex = insert.columns.indexOf('is_admin_only');
+      if (categoryIndex < 0) reject('missing_category', 'menu_items INSERTにはcategory列が必要です。');
+      for (const row of insert.rows) {
+        const category = parseLiteral(row[categoryIndex]);
+        if (category === '宴会コース') {
+          const isAdminOnly = adminOnlyIndex < 0 ? null : parseLiteral(row[adminOnlyIndex]);
+          if (isAdminOnly !== 1) {
+            reject('banquet_visibility', '宴会コースはis_admin_only列へ1を指定してください。');
+          }
+        }
+      }
       menuItemCount += insert.rows.length;
       continue;
     }
@@ -245,14 +258,19 @@ export function validateProductionSeed(text) {
     for (const row of insert.rows) {
       const role = parseLiteral(row[roleIndex]);
       const isActive = activeIndex < 0 ? 1 : parseLiteral(row[activeIndex]);
-      if (role === 'admin' && isActive === 1) activeAdminCount += 1;
+      if (role === 'admin') {
+        adminCount += 1;
+        if (isActive === 1) activeAdminCount += 1;
+      }
     }
   }
 
-  if (activeAdminCount !== 1) reject('admin_count', '有効な初期adminはちょうど1人にしてください。');
+  if (adminCount !== 1 || activeAdminCount !== 1) {
+    reject('admin_count', '有効な初期adminアカウントはちょうど1人にしてください。');
+  }
   if (menuItemCount < 1) reject('menu_count', 'menu_itemsのINSERTを1件以上用意してください。');
 
-  return { activeAdminCount, menuItemCount };
+  return { adminCount, activeAdminCount, menuItemCount };
 }
 
 function run() {

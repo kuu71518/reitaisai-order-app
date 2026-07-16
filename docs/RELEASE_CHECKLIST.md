@@ -1,8 +1,8 @@
 # 公開前チェックリスト
 
-更新日: 2026-07-14
+更新日: 2026-07-15
 
-現在の`[x]`は、2026-07-14時点の未コミットworking treeに対する引継ぎ検証記録であり、そのまま公開承認には使いません。release commit後に同じ検証を全件再実行し、コード変更が入った場合も再実行してください。
+現在の`[x]`は、2026-07-15時点の未コミットworking treeに対するローカル検証記録であり、そのまま公開承認には使いません。release commit後に同じ検証を全件再実行し、コード変更が入った場合も再実行してください。
 
 - Release commit SHA: 未確定（公開前に記入）
 - 最終検証JST / UTC: 未確定（同じSHAの検証完了後に記入）
@@ -30,14 +30,19 @@
 - [x] fresh local D1へ全migration適用
 - [x] staging fixture適用
 - [x] foreign key error 0件
-- [x] 320px幅のログインUI確認
-- [x] 未ログイン初回画面に誤った「期限切れ」を出さない
+- [ ] 320px幅のログインUIを実ブラウザで確認
+- [ ] 未ログイン初回画面に誤った「期限切れ」を出さないことを実ブラウザで確認
 - [x] memberからadmin APIを403
 - [x] CSRFなしの書込みを403
 - [x] 注文bodyの偽user IDを無視し、session本人で保存
-- [x] 誤ったDiscord連携コードを422
-- [x] 正しいDiscord連携コードだけ承認
-- [x] 最後のadmin降格を409
+- [x] HMAC Secret不足時にOAuthを503でfail closed
+- [x] 生Discord ID列と旧連携申請tableが最終schemaに存在しない
+- [x] activeかつ唯一のadmin 1人をDB制約で保護
+- [x] memberのメニューから宴会コースを除外
+- [x] memberが宴会コースIDを直接指定しても404
+- [x] memberから管理者代理注文APIを403
+- [x] 管理者追加注文の追加元を記録し、管理者追加分だけ訂正可能
+- [x] JST 21:29は注意非表示、21:30は表示
 
 ## staging環境
 
@@ -49,10 +54,19 @@
 - [ ] PagesとAPIが同じ独自ドメインsite配下
 - [ ] staging migration一覧を確認して適用
 - [ ] 架空fixtureだけを投入
+- [ ] stagingとproductionで別の`DISCORD_ID_HMAC_KEY`をパスワード管理アプリへ保存
 - [ ] iPhone SafariでDiscordログイン成功
 - [ ] Android ChromeでDiscordログイン成功
 - [ ] 初回admin bootstrap後にbootstrap Secret削除
+- [ ] 登録済みアカウントだけログイン成功
+- [ ] 未登録アカウントを拒否し、未知のDiscord情報をDBへ残さない
+- [ ] ログイン許可解除後、既存sessionも利用不可
 - [ ] member / manager / adminの実機権限確認
+- [ ] memberに宴会コースが見えず、ID直指定も拒否
+- [ ] admin代理追加が本人履歴へ表示され、宴会コースは即`ordered`
+- [ ] 管理者の事前追加だけ訂正でき、合計と監査ログへ反映
+- [ ] 21:29非表示・21:30表示をJSTで確認
+- [ ] 320px幅で追加toastと固定カートを確認
 - [ ] 他グループ注文へのID指定アクセスを拒否
 - [ ] ログアウト後のsession再利用を拒否
 - [ ] PWAがAPI・認証レスポンスをキャッシュしない
@@ -87,7 +101,9 @@
 - [ ] Pages production deploymentのSHAが記録したcommit SHAと一致
 - [ ] production participant/menu件数を個人名なしで記録
 - [ ] Client SecretをWorkers Secretへ登録
+- [ ] production専用HMAC鍵をWorkers Secretへ登録し、復旧可能性を確認
 - [ ] Client SecretがGit・ログ・チャットにない
+- [ ] HMAC鍵・Discord User IDがGit・ログ・チャットにない
 - [ ] 本人確認済みの初回admin Discord User IDをSecret登録
 - [ ] production OAuth WAF ruleを有効化し設定を記録
 - [ ] production Pages custom domainが`Active`でHTTPS接続可能
@@ -98,6 +114,8 @@
 
 - [ ] 管理者ログイン成功
 - [ ] bootstrap Secret削除
+- [ ] 本人確認済み参加者・managerのログイン許可を管理画面から登録
+- [ ] ログイン許可登録後の新D1公開直前bookmarkを記録
 - [ ] URL案内時刻と注文受付開始時刻を記録
 - [ ] ダミー注文を作らず、最初の実注文ID/時刻を記録
 - [ ] 最初の実注文をmember表示とmanager自グループ表示で照合
