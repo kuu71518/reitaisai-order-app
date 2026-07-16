@@ -17,3 +17,11 @@ assert.match(
   /\/sw\.js\s+Cache-Control: no-cache, no-store, must-revalidate/,
 )
 assert.match(headers, /\/assets\/\*\s+Cache-Control: public, max-age=31536000, immutable/)
+assert.match(headers, /\/\*\s+X-Frame-Options: DENY/)
+assert.match(headers, /X-Content-Type-Options: nosniff/)
+assert.match(headers, /Referrer-Policy: no-referrer/)
+assert.match(headers, /Permissions-Policy: camera=\(\), geolocation=\(\), microphone=\(\)/)
+assert.match(
+  headers,
+  /Content-Security-Policy: base-uri 'self'; frame-ancestors 'none'; object-src 'none'/,
+)
