@@ -20,7 +20,7 @@ CREATE UNIQUE INDEX idx_users_discord_id_hmac
     WHERE discord_id_hmac IS NOT NULL;
 
 -- A fresh database has no users yet. An existing database must already have
--- exactly one active administrator; stop instead of guessing which account wins.
+-- exactly one active administrator. Stop instead of guessing which account wins.
 CREATE TABLE migration_0003_admin_guard (
     user_count INTEGER NOT NULL,
     admin_count INTEGER NOT NULL,
