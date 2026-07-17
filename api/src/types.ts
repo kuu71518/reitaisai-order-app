@@ -22,6 +22,7 @@ export type SessionUser = {
 
 export type AuthContext = {
   sessionId: number;
+  sessionCreatedAt: number;
   sessionToken: string;
   user: SessionUser;
 };

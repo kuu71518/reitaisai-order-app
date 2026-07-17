@@ -3,6 +3,9 @@ import { apiRequest, getErrorMessage, resolveApiUrl } from '../lib/api';
 import { formatDateTime, formatYen, orderTotal } from '../lib/format';
 import { createRequestId } from '../lib/requestId';
 import { EmptyState, Field, LoadingState, ScreenIntro, StatusNotice } from './States';
+import BulkUserImport from './admin/BulkUserImport';
+import DataResetPanel from './admin/DataResetPanel';
+import UserDeleteAction from './admin/UserDeleteAction';
 
 const ADMIN_TABS = [
   { id: 'overview', label: '全体状況' },
@@ -36,8 +39,11 @@ const AUDIT_LABELS = {
   ORDER_QUANTITY_UPDATE: '注文個数変更',
   ORDER_STATUS_UPDATE: '注文伝達済み',
   USER_CREATE: '参加者追加',
+  USER_BULK_CREATE: '参加者一括追加',
+  USER_DEACTIVATE: '参加者削除',
   USER_UPDATE: '参加者設定変更',
   MENU_CREATE: 'メニュー追加',
+  EVENT_DATA_RESET: '開催データリセット',
 };
 
 function getData(payload) {
@@ -328,6 +334,42 @@ export default function AdminDashboard() {
     }
   };
 
+  const refreshPeopleAfterBulkAdd = async () => {
+    setLoadedTabs((current) => current.filter((tabId) => !['overview', 'people', 'orders', 'logs'].includes(tabId)));
+    return await refreshData({ tabId: 'people' });
+  };
+
+  const handleUserDeleted = (user) => {
+    setUsers((current) => current.filter((item) => item.id !== user.id));
+    setUserActions((current) => {
+      const next = { ...current };
+      delete next[user.id];
+      return next;
+    });
+    if (editingUserId === user.id) cancelUserEdit();
+    setLoadedTabs((current) => current.filter((tabId) => !['overview', 'orders', 'logs'].includes(tabId)));
+    setNotice({
+      tone: 'success',
+      title: `${user.name}さんを参加者一覧から削除しました。`,
+      message: '本人はログインできなくなりました。過去の注文・会計・操作履歴は残ります。',
+    });
+  };
+
+  const handleDataReset = () => {
+    setUsers((current) => current.filter((user) => user.role === 'admin'));
+    setOrders([]);
+    setAuditLogs([]);
+    setStats(EMPTY_STATS);
+    setLoadedTabs([]);
+    setEditingUserId(null);
+    setUserActions({});
+    setNotice({
+      tone: 'success',
+      title: '開催データをリセットしました。',
+      message: '参加者と注文は削除され、管理者・メニュー・操作履歴は残っています。',
+    });
+  };
+
   const revokeDiscordAccess = async (user) => {
     if (!window.confirm(`${user.name}さんのログイン許可を解除しますか？ 現在ログイン中の端末もログアウトされます。`)) return;
 
@@ -499,8 +541,8 @@ export default function AdminDashboard() {
           <p className="admin-panel-description">グループと権限は、編集後に保存したときだけ反映されます。</p>
         </div>
 
-        <StatusNotice tone="info" title="参加者の削除は現在利用できません">
-          注文履歴を残したまま利用停止にする仕組みを準備しています。登録内容の編集は利用できます。
+        <StatusNotice tone="info" title="削除しても過去の記録は残ります">
+          参加者を削除するとログインできなくなります。過去の注文・会計・操作履歴は確認用に残ります。
         </StatusNotice>
 
         {users.length === 0 ? (
@@ -581,7 +623,12 @@ export default function AdminDashboard() {
                           {action.busy ? '解除しています' : 'ログイン許可を解除'}
                         </button>
                       )}
-                      <button type="button" className="admin-button admin-button-disabled" disabled>削除は準備中</button>
+                      <UserDeleteAction
+                        user={user}
+                        disabled={action.busy}
+                        onBusyChange={(busy) => setUserAction(user.id, { busy, error: '' })}
+                        onDeleted={handleUserDeleted}
+                      />
                     </div>
                   )}
 
@@ -657,6 +704,8 @@ export default function AdminDashboard() {
           </div>
         </form>
       </section>
+
+      <BulkUserImport onComplete={refreshPeopleAfterBulkAdd} />
     </div>
   );
 
@@ -931,28 +980,7 @@ export default function AdminDashboard() {
     </section>
   );
 
-  const renderSafety = () => (
-    <section className="admin-panel admin-safety-panel" aria-labelledby="admin-safety-heading">
-      <div className="admin-panel-heading">
-        <div>
-          <p className="admin-eyebrow">危険な操作</p>
-          <h2 id="admin-safety-heading">全データリセット</h2>
-        </div>
-      </div>
-      <StatusNotice tone="danger" title="全データリセットは現在利用できません">
-        管理者の再認証と、バックアップ確認を行うAPIが未実装です。安全条件が揃うまで実行ボタンは表示しません。
-      </StatusNotice>
-      <div className="admin-safety-requirements">
-        <h3>利用を再開するために必要なもの</h3>
-        <ul>
-          <li>操作する管理者の再認証</li>
-          <li>対象となる開催回の明示</li>
-          <li>バックアップ取得済みであることの確認</li>
-          <li>削除対象を示す最終確認画面</li>
-        </ul>
-      </div>
-    </section>
-  );
+  const renderSafety = () => <DataResetPanel onComplete={handleDataReset} />;
 
   const renderActiveTab = () => {
     if (activeTab === 'people') return renderPeople();

@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   cleanText,
   deriveDiscordIdHmac,
+  deriveDiscordIdHmacBatch,
   deriveCsrfToken,
   hasRole,
   isAssignableUserRole,
@@ -42,6 +43,26 @@ test('Discord IDs use a versioned keyed HMAC without retaining the source value'
   assert.notEqual(await deriveDiscordIdHmac(secondKey, id), first);
   assert.equal(await deriveDiscordIdHmac('short-key', id), '');
   assert.equal(await deriveDiscordIdHmac(firstKey, 'not-an-id'), '');
+});
+
+test('Discord ID batch HMAC keeps input order and matches the single-value helper', async () => {
+  const key = 'batch-test-key-with-at-least-32-characters';
+  const ids = ['123456789012345678', '223456789012345678', '323456789012345678'];
+  const batch = await deriveDiscordIdHmacBatch(key, ids);
+  const singles = await Promise.all(ids.map((id) => deriveDiscordIdHmac(key, id)));
+
+  assert.deepEqual(batch, singles);
+  assert.equal(batch.length, ids.length);
+  assert.equal(new Set(batch).size, ids.length);
+});
+
+test('Discord ID batch HMAC fails closed before signing invalid input', async () => {
+  const key = 'batch-test-key-with-at-least-32-characters';
+  assert.deepEqual(await deriveDiscordIdHmacBatch('short-key', ['123456789012345678']), []);
+  assert.deepEqual(await deriveDiscordIdHmacBatch(key, ['123456789012345678', 'invalid']), []);
+  assert.deepEqual(await deriveDiscordIdHmacBatch(key, []), []);
+  assert.deepEqual(await deriveDiscordIdHmacBatch(key, '123456789012345678'), []);
+  assert.deepEqual(await deriveDiscordIdHmacBatch(key, Array(1)), []);
 });
 
 test('timingSafeEqual rejects mismatches', () => {
