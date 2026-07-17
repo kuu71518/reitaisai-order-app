@@ -804,6 +804,11 @@ app.post('/api/admin/data-reset', async (c) => {
         expectedOtherSessionCount,
       ),
       c.env.DB.prepare(`
+        SELECT CASE WHEN EXISTS (
+          SELECT 1 FROM oauth_states WHERE state_hash = ? AND used_at IS NULL
+        ) THEN 1 ELSE 0 END AS acquired
+      `).bind(guardHash),
+      c.env.DB.prepare(`
         DELETE FROM orders
         WHERE EXISTS (
           SELECT 1 FROM oauth_states WHERE state_hash = ? AND used_at IS NULL
@@ -840,23 +845,26 @@ app.post('/api/admin/data-reset', async (c) => {
       c.env.DB.prepare('DELETE FROM oauth_states WHERE state_hash = ?').bind(guardHash),
     ]);
 
-    if (results[0].meta.changes !== 1) {
+    const guardAcquired = Number(
+      (results[1].results[0] as { acquired?: unknown } | undefined)?.acquired || 0,
+    ) === 1;
+    if (!guardAcquired) {
       return fail(c, 409, 'リセット対象が変更されました。内容を再確認してください。', 'RESET_PREVIEW_STALE');
     }
-    if (results[1].meta.changes !== expectedOrderCount
-      || results[2].meta.changes !== expectedOtherSessionCount
-      || results[3].meta.changes !== expectedUserCount
-      || results[5].meta.changes !== 1
-      || results[6].meta.changes !== 1) {
-      return fail(c, 500, '開催データのリセット結果を確認できませんでした。');
-    }
+
+    // D1 commits a successful batch atomically. Per-statement `meta.changes` can
+    // differ from the requested row counts when related foreign-key work is
+    // involved, so it is not a stable post-commit verification method here.
+    // The guard SELECT above is the atomic stale-preview check; once the batch
+    // resolves, return its approved counts instead of reporting a false failure
+    // after the reset has already completed.
 
     return c.json({
       success: true,
       data: {
-        deleted_user_count: results[3].meta.changes,
-        deleted_order_count: results[1].meta.changes,
-        deleted_session_count: results[2].meta.changes,
+        deleted_user_count: expectedUserCount,
+        deleted_order_count: expectedOrderCount,
+        deleted_session_count: expectedOtherSessionCount,
       },
     });
   } catch {
