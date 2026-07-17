@@ -25,8 +25,14 @@ export async function sha256Base64Url(value) {
   return bytesToBase64Url(new Uint8Array(digest));
 }
 
-export async function deriveDiscordIdHmac(secret, discordUserId) {
-  if (typeof secret !== 'string' || secret.length < 32 || !isDiscordSnowflake(discordUserId)) return '';
+export async function deriveDiscordIdHmacBatch(secret, discordUserIds) {
+  if (typeof secret !== 'string'
+    || secret.length < 32
+    || !Array.isArray(discordUserIds)
+    || discordUserIds.length === 0) return [];
+  for (const discordUserId of discordUserIds) {
+    if (!isDiscordSnowflake(discordUserId)) return [];
+  }
   const key = await crypto.subtle.importKey(
     'raw',
     encoder.encode(secret),
@@ -34,12 +40,19 @@ export async function deriveDiscordIdHmac(secret, discordUserId) {
     false,
     ['sign'],
   );
-  const signature = await crypto.subtle.sign(
-    'HMAC',
-    key,
-    encoder.encode(`discord-user-id:v1:${discordUserId}`),
-  );
-  return `v1.${bytesToBase64Url(new Uint8Array(signature))}`;
+  return Promise.all(discordUserIds.map(async (discordUserId) => {
+    const signature = await crypto.subtle.sign(
+      'HMAC',
+      key,
+      encoder.encode(`discord-user-id:v1:${discordUserId}`),
+    );
+    return `v1.${bytesToBase64Url(new Uint8Array(signature))}`;
+  }));
+}
+
+export async function deriveDiscordIdHmac(secret, discordUserId) {
+  const [discordIdHmac = ''] = await deriveDiscordIdHmacBatch(secret, [discordUserId]);
+  return discordIdHmac;
 }
 
 export function timingSafeEqual(left, right) {

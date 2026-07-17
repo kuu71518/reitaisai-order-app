@@ -20,6 +20,7 @@ function createAdminDb(state) {
           if (sql.includes('FROM auth_sessions')) {
             return {
               session_id: 1,
+              created_at: Math.floor(Date.now() / 1000),
               last_seen_at: Math.floor(Date.now() / 1000),
               id: 1,
               name: '管理テスト',

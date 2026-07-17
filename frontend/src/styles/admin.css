@@ -453,6 +453,296 @@
   padding-left: 1.35rem;
 }
 
+.admin-bulk-panel {
+  border-top: 6px solid var(--gold);
+}
+
+.admin-import-help {
+  margin-bottom: 20px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--surface-soft);
+}
+
+.admin-import-help summary {
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 10px 14px;
+  color: var(--indigo);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.admin-import-help[open] summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.admin-import-help p {
+  margin: 0;
+  padding: 14px 14px 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.admin-import-header-example {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin: 14px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--line-strong);
+}
+
+.admin-import-header-example span {
+  min-width: 0;
+  background: var(--surface);
+  padding: 9px 10px;
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.admin-bulk-textarea {
+  min-height: 180px;
+  resize: vertical;
+  line-height: 1.55;
+  white-space: pre;
+  overflow: auto;
+}
+
+.admin-operation-errors {
+  display: grid;
+  gap: 6px;
+  margin: -4px 0 0;
+  border: 1px solid #e5aaa5;
+  border-radius: 12px;
+  background: var(--danger-soft);
+  padding: 12px 14px 12px 2.2rem;
+  color: #84211c;
+  font-size: 0.88rem;
+}
+
+.admin-bulk-preview {
+  overflow: hidden;
+  border: 1px solid #b8c4d6;
+  border-top: 6px solid var(--indigo);
+  border-radius: 7px 7px 15px 15px;
+  background: var(--surface);
+}
+
+.admin-bulk-preview-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 2px dashed var(--line-strong);
+  padding: 15px 17px;
+}
+
+.admin-bulk-preview-heading > div {
+  display: grid;
+}
+
+.admin-bulk-preview-heading span {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.admin-bulk-preview-heading h3 {
+  margin: 0;
+  color: var(--indigo);
+}
+
+.admin-bulk-preview-heading > strong {
+  flex: 0 0 auto;
+  border: 2px solid rgba(201, 52, 45, 0.35);
+  border-radius: 6px;
+  color: var(--torii);
+  padding: 4px 9px;
+  transform: rotate(-3deg);
+}
+
+.admin-bulk-preview-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-height: 360px;
+  margin: 0;
+  overflow: auto;
+  padding: 0;
+  list-style: none;
+}
+
+.admin-bulk-preview-list li {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  border-bottom: 1px dashed var(--line);
+  padding: 12px 15px;
+}
+
+.admin-bulk-preview-list li:nth-child(odd) {
+  border-right: 1px dashed var(--line);
+}
+
+.admin-bulk-preview-list li > span,
+.admin-bulk-preview-list li > small {
+  color: var(--muted);
+  font-size: 0.76rem;
+  overflow-wrap: anywhere;
+}
+
+.admin-bulk-preview-list li > strong {
+  overflow-wrap: anywhere;
+}
+
+.admin-inline-confirm {
+  display: grid;
+  flex: 1 0 100%;
+  gap: 14px;
+  width: 100%;
+  margin-top: 5px;
+  border: 1px solid #e5aaa5;
+  border-radius: 13px;
+  background: var(--danger-soft);
+  padding: 15px;
+}
+
+.admin-inline-confirm-copy {
+  display: grid;
+  gap: 5px;
+}
+
+.admin-inline-confirm-copy strong {
+  color: #84211c;
+}
+
+.admin-inline-confirm-copy span {
+  color: #6d3935;
+  font-size: 0.88rem;
+}
+
+.admin-inline-confirm .status-notice {
+  margin-bottom: 0;
+}
+
+.admin-reset-content {
+  display: grid;
+  gap: 20px;
+}
+
+.admin-reset-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.admin-reset-counts {
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.admin-reset-counts.is-delete {
+  border-top: 6px solid var(--danger);
+}
+
+.admin-reset-counts.is-keep {
+  border-top: 6px solid var(--success);
+}
+
+.admin-reset-counts h3 {
+  margin: 0;
+  padding: 13px 15px;
+  color: var(--indigo);
+  font-size: 1rem;
+}
+
+.admin-reset-counts dl {
+  margin: 0;
+}
+
+.admin-reset-counts dl > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 48px;
+  border-top: 1px dashed var(--line);
+  padding: 9px 15px;
+}
+
+.admin-reset-counts dt {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.admin-reset-count-detail {
+  align-items: flex-start !important;
+}
+
+.admin-reset-count-detail dt {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.admin-reset-count-detail dt > span {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.admin-reset-count-detail dt > small {
+  max-width: 30rem;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.admin-reset-counts dd {
+  margin: 0;
+  color: var(--indigo);
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.admin-reset-checks {
+  display: grid;
+  gap: 16px;
+  border: 1px dashed #d78c86;
+  border-radius: 14px;
+  background: #fffafa;
+  padding: 17px;
+}
+
+.admin-confirm-checkbox {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  color: var(--ink);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.admin-confirm-checkbox input {
+  width: 24px;
+  height: 24px;
+  margin: 0;
+  accent-color: var(--torii);
+}
+
+.admin-confirm-checkbox span {
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 760px) {
   .admin-tabs {
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -482,6 +772,11 @@
   .admin-form-actions .admin-button {
     flex: 1 1 140px;
   }
+
+  .admin-import-header-example,
+  .admin-reset-summary {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 @media (max-width: 520px) {
@@ -501,8 +796,24 @@
 
   .admin-form-grid,
   .admin-quick-actions,
-  .admin-order-preview {
+  .admin-order-preview,
+  .admin-import-header-example,
+  .admin-bulk-preview-list,
+  .admin-reset-summary {
     grid-template-columns: 1fr;
+  }
+
+  .admin-bulk-preview-list li:nth-child(odd) {
+    border-right: 0;
+  }
+
+  .admin-bulk-textarea {
+    min-height: 220px;
+  }
+
+  .admin-inline-confirm,
+  .admin-reset-checks {
+    padding: 14px 12px;
   }
 
   .admin-order-preview b {

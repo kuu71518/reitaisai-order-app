@@ -23,6 +23,7 @@ function createDb(role) {
           if (sql.includes('FROM auth_sessions')) {
             return {
               session_id: 1,
+              created_at: Math.floor(Date.now() / 1000),
               last_seen_at: Math.floor(Date.now() / 1000),
               id: role === 'admin' ? 1 : 2,
               name: role === 'admin' ? '管理テスト' : '参加テスト',
