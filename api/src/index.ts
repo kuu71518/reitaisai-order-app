@@ -3,6 +3,7 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import {
   cleanText,
   deriveDiscordIdHmac,
+  deriveDiscordIdHmacBatch,
   deriveCsrfToken,
   hasRole,
   isAllowedOrigin,
@@ -23,6 +24,8 @@ const SESSION_IDLE_SECONDS = 5 * 60 * 60;
 const SESSION_ABSOLUTE_SECONDS = 12 * 60 * 60;
 const OAUTH_STATE_SECONDS = 10 * 60;
 const SESSION_TOUCH_SECONDS = 5 * 60;
+const RECENT_ADMIN_AUTH_SECONDS = 5 * 60;
+const RESET_CONFIRMATION = '開催データをリセット';
 const DISCORD_AUTHORIZE_URL = 'https://discord.com/oauth2/authorize';
 const DISCORD_TOKEN_URL = 'https://discord.com/api/v10/oauth2/token';
 const DISCORD_ME_URL = 'https://discord.com/api/v10/users/@me';
@@ -33,12 +36,28 @@ const PUBLIC_PATHS = new Set([
   '/api/auth/discord/callback',
 ]);
 
-type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 410 | 422 | 429 | 500 | 502 | 503;
+type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 410 | 422 | 428 | 429 | 500 | 502 | 503;
 type JsonObject = Record<string, unknown>;
 
 type SessionRow = SessionUser & {
   session_id: number;
+  created_at: number;
   last_seen_at: number;
+};
+
+type BulkUser = {
+  name: string;
+  groupId: string;
+  role: Exclude<UserRole, 'admin'>;
+  discordIdHmac: string;
+};
+
+type ResetPreview = {
+  user_count: number;
+  order_count: number;
+  other_session_count: number;
+  preserved_menu_count: number;
+  preserved_audit_count: number;
 };
 
 type DiscordUser = {
@@ -217,6 +236,7 @@ async function loadSession(c: Context<AppEnv>): Promise<AuthContext | null> {
   const row = await c.env.DB.prepare(`
     SELECT
       s.id AS session_id,
+      s.created_at,
       s.last_seen_at,
       u.id,
       u.name,
@@ -247,6 +267,7 @@ async function loadSession(c: Context<AppEnv>): Promise<AuthContext | null> {
 
   return {
     sessionId: row.session_id,
+    sessionCreatedAt: row.created_at,
     sessionToken,
     user: {
       id: row.id,
@@ -280,6 +301,44 @@ function requireRole(c: Context<AppEnv>, roles: UserRole[]) {
   return hasRole(auth.user.role, roles)
     ? null
     : fail(c, 403, 'この操作を行う権限がありません。', 'FORBIDDEN');
+}
+
+function requireRecentAdminLogin(c: Context<AppEnv>) {
+  const auth = c.get('auth');
+  const ageSeconds = nowSeconds() - auth.sessionCreatedAt;
+  return Number.isInteger(auth.sessionCreatedAt) && ageSeconds >= 0 && ageSeconds <= RECENT_ADMIN_AUTH_SECONDS
+    ? null
+    : fail(
+      c,
+      428,
+      '安全のため、Discordへ再ログインしてからもう一度お試しください。',
+      'RECENT_LOGIN_REQUIRED',
+    );
+}
+
+function parseNonNegativeInteger(value: unknown) {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function resultNumber(result: D1Result, key: string) {
+  return Number((result.results[0] as Record<string, unknown> | undefined)?.[key] || 0);
+}
+
+async function readResetPreview(env: Bindings, currentSessionId: number): Promise<ResetPreview> {
+  const [users, orders, sessions, menuItems, auditLogs] = await env.DB.batch([
+    env.DB.prepare("SELECT COUNT(*) AS count FROM users WHERE role != 'admin'"),
+    env.DB.prepare('SELECT COUNT(*) AS count FROM orders'),
+    env.DB.prepare('SELECT COUNT(*) AS count FROM auth_sessions WHERE id != ?').bind(currentSessionId),
+    env.DB.prepare('SELECT COUNT(*) AS count FROM menu_items'),
+    env.DB.prepare('SELECT COUNT(*) AS count FROM audit_logs'),
+  ]);
+  return {
+    user_count: resultNumber(users, 'count'),
+    order_count: resultNumber(orders, 'count'),
+    other_session_count: resultNumber(sessions, 'count'),
+    preserved_menu_count: resultNumber(menuItems, 'count'),
+    preserved_audit_count: resultNumber(auditLogs, 'count'),
+  };
 }
 
 async function issueSession(c: Context<AppEnv>, user: SessionUser) {
@@ -674,6 +733,137 @@ app.get('/api/admin/stats', async (c) => {
   });
 });
 
+app.get('/api/admin/data-reset/preview', async (c) => {
+  const roleError = requireRole(c, ['admin']);
+  if (roleError) return roleError;
+  const auth = c.get('auth');
+  try {
+    const preview = await readResetPreview(c.env, auth.sessionId);
+    return c.json({ success: true, data: preview });
+  } catch {
+    return fail(c, 500, 'リセット対象を確認できませんでした。');
+  }
+});
+
+app.post('/api/admin/data-reset', async (c) => {
+  const roleError = requireRole(c, ['admin']);
+  if (roleError) return roleError;
+  const recentLoginError = requireRecentAdminLogin(c);
+  if (recentLoginError) return recentLoginError;
+  const auth = c.get('auth');
+  const body = await readJsonObject(c);
+  if (!body) return fail(c, 400, 'リセットの確認内容を読み取れませんでした。');
+
+  if (body.backup_confirmed !== true) {
+    return fail(c, 422, '復元地点を記録したことを確認してください。', 'BACKUP_CONFIRMATION_REQUIRED');
+  }
+  if (body.confirmation !== RESET_CONFIRMATION) {
+    return fail(c, 422, '確認用の文字が一致しません。', 'RESET_CONFIRMATION_MISMATCH');
+  }
+  const expectedUserCount = parseNonNegativeInteger(body.expected_user_count);
+  const expectedOrderCount = parseNonNegativeInteger(body.expected_order_count);
+  const expectedOtherSessionCount = parseNonNegativeInteger(body.expected_other_session_count);
+  if (expectedUserCount === null || expectedOrderCount === null || expectedOtherSessionCount === null) {
+    return fail(c, 422, 'リセット対象の件数を再確認してください。', 'RESET_COUNTS_INVALID');
+  }
+
+  let preview: ResetPreview;
+  try {
+    preview = await readResetPreview(c.env, auth.sessionId);
+  } catch {
+    return fail(c, 500, 'リセット対象を再確認できませんでした。');
+  }
+  if (preview.user_count !== expectedUserCount
+    || preview.order_count !== expectedOrderCount
+    || preview.other_session_count !== expectedOtherSessionCount) {
+    return fail(c, 409, 'リセット対象が変更されました。内容を再確認してください。', 'RESET_PREVIEW_STALE');
+  }
+
+  const now = nowSeconds();
+  const guardHash = await sha256Base64Url(`event-data-reset:${randomToken()}`);
+  const metadata = JSON.stringify({
+    deleted_user_count: expectedUserCount,
+    deleted_order_count: expectedOrderCount,
+    deleted_session_count: expectedOtherSessionCount,
+  });
+  try {
+    const results = await c.env.DB.batch([
+      c.env.DB.prepare(`
+        INSERT INTO oauth_states (state_hash, created_at, expires_at, used_at)
+        SELECT ?, ?, ?, NULL
+        WHERE (SELECT COUNT(*) FROM users WHERE role != 'admin') = ?
+          AND (SELECT COUNT(*) FROM orders) = ?
+          AND (SELECT COUNT(*) FROM auth_sessions WHERE id != ?) = ?
+      `).bind(
+        guardHash,
+        now,
+        now + 60,
+        expectedUserCount,
+        expectedOrderCount,
+        auth.sessionId,
+        expectedOtherSessionCount,
+      ),
+      c.env.DB.prepare(`
+        DELETE FROM orders
+        WHERE EXISTS (
+          SELECT 1 FROM oauth_states WHERE state_hash = ? AND used_at IS NULL
+        )
+      `).bind(guardHash),
+      c.env.DB.prepare(`
+        DELETE FROM auth_sessions
+        WHERE id != ?
+          AND EXISTS (
+            SELECT 1 FROM oauth_states WHERE state_hash = ? AND used_at IS NULL
+          )
+      `).bind(auth.sessionId, guardHash),
+      c.env.DB.prepare(`
+        DELETE FROM users
+        WHERE role != 'admin'
+          AND EXISTS (
+            SELECT 1 FROM oauth_states WHERE state_hash = ? AND used_at IS NULL
+          )
+      `).bind(guardHash),
+      c.env.DB.prepare(`
+        DELETE FROM oauth_states
+        WHERE state_hash != ?
+          AND EXISTS (
+            SELECT 1 FROM oauth_states WHERE state_hash = ? AND used_at IS NULL
+          )
+      `).bind(guardHash, guardHash),
+      c.env.DB.prepare(`
+        INSERT INTO audit_logs (actor_user_id, action_type, target_type, target_id, metadata_json)
+        SELECT ?, 'EVENT_DATA_RESET', 'event_data', NULL, ?
+        WHERE EXISTS (
+          SELECT 1 FROM oauth_states WHERE state_hash = ? AND used_at IS NULL
+        )
+      `).bind(auth.user.id, metadata, guardHash),
+      c.env.DB.prepare('DELETE FROM oauth_states WHERE state_hash = ?').bind(guardHash),
+    ]);
+
+    if (results[0].meta.changes !== 1) {
+      return fail(c, 409, 'リセット対象が変更されました。内容を再確認してください。', 'RESET_PREVIEW_STALE');
+    }
+    if (results[1].meta.changes !== expectedOrderCount
+      || results[2].meta.changes !== expectedOtherSessionCount
+      || results[3].meta.changes !== expectedUserCount
+      || results[5].meta.changes !== 1
+      || results[6].meta.changes !== 1) {
+      return fail(c, 500, '開催データのリセット結果を確認できませんでした。');
+    }
+
+    return c.json({
+      success: true,
+      data: {
+        deleted_user_count: results[3].meta.changes,
+        deleted_order_count: results[1].meta.changes,
+        deleted_session_count: results[2].meta.changes,
+      },
+    });
+  } catch {
+    return fail(c, 500, '開催データをリセットできませんでした。');
+  }
+});
+
 app.get('/api/admin/orders', async (c) => {
   const roleError = requireRole(c, ['admin']);
   if (roleError) return roleError;
@@ -848,6 +1038,172 @@ app.get('/api/admin/users', async (c) => {
   return c.json({ success: true, data: results });
 });
 
+app.post('/api/admin/users/bulk', async (c) => {
+  const roleError = requireRole(c, ['admin']);
+  if (roleError) return roleError;
+  const auth = c.get('auth');
+  const body = await readJsonObject(c);
+  const rows = body?.users;
+  if (!Array.isArray(rows) || rows.length < 1 || rows.length > 100) {
+    return c.json({
+      success: false,
+      message: '一括追加する参加者は1人から100人で指定してください。',
+      code: 'BULK_VALIDATION_FAILED',
+      data: { errors: [{ row: 0, fields: ['users'] }] },
+    }, 422);
+  }
+
+  const candidates: Array<{
+    name: string;
+    groupId: string;
+    role: Exclude<UserRole, 'admin'>;
+    discordUserId: string;
+  }> = [];
+  const errors: Array<{ row: number; fields: string[] }> = [];
+  rows.forEach((row, index) => {
+    const rowNumber = index + 1;
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      errors.push({ row: rowNumber, fields: ['row'] });
+      return;
+    }
+    const input = row as JsonObject;
+    const name = cleanText(input.name, 80);
+    const groupId = cleanText(input.group_id, 80);
+    const role = input.role;
+    const discordUserId = cleanText(input.discord_user_id, 22);
+    const fields: string[] = [];
+    if (!name) fields.push('name');
+    if (!groupId) fields.push('group_id');
+    if (!isAssignableUserRole(role)) fields.push('role');
+    if (!isDiscordSnowflake(discordUserId)) fields.push('discord_user_id');
+    if (fields.length > 0) {
+      errors.push({ row: rowNumber, fields });
+      return;
+    }
+    candidates.push({
+      name,
+      groupId,
+      role: role as Exclude<UserRole, 'admin'>,
+      discordUserId,
+    });
+  });
+  if (errors.length > 0) {
+    return c.json({
+      success: false,
+      message: '一括追加する参加者の内容を確認してください。',
+      code: 'BULK_VALIDATION_FAILED',
+      data: { errors },
+    }, 422);
+  }
+
+  const hmacKey = cleanText(c.env.DISCORD_ID_HMAC_KEY, 512);
+  if (hmacKey.length < 32) return fail(c, 503, 'ログイン照合の設定が完了していません。', 'AUTH_NOT_CONFIGURED');
+  const discordIdHmacs = await deriveDiscordIdHmacBatch(
+    hmacKey,
+    candidates.map((candidate) => candidate.discordUserId),
+  );
+  if (discordIdHmacs.length !== candidates.length) {
+    return fail(c, 500, '参加者のログイン照合値を作成できませんでした。');
+  }
+  const users: BulkUser[] = candidates.map((candidate, index) => ({
+    name: candidate.name,
+    groupId: candidate.groupId,
+    role: candidate.role,
+    discordIdHmac: discordIdHmacs[index],
+  }));
+
+  const firstRowByHmac = new Map<string, number>();
+  const duplicateRequestRows = new Set<number>();
+  users.forEach((user, index) => {
+    const rowNumber = index + 1;
+    const firstRow = firstRowByHmac.get(user.discordIdHmac);
+    if (firstRow) {
+      duplicateRequestRows.add(firstRow);
+      duplicateRequestRows.add(rowNumber);
+    } else {
+      firstRowByHmac.set(user.discordIdHmac, rowNumber);
+    }
+  });
+  if (duplicateRequestRows.size > 0) {
+    return c.json({
+      success: false,
+      message: '同じDiscordアカウントが一括追加の中に重複しています。',
+      code: 'BULK_DUPLICATE_IN_REQUEST',
+      data: { rows: [...duplicateRequestRows].sort((left, right) => left - right) },
+    }, 409);
+  }
+
+  const placeholders = users.map(() => '?').join(',');
+  let existingHmacs: Set<string>;
+  try {
+    const existing = await c.env.DB.prepare(`
+      SELECT discord_id_hmac
+      FROM users
+      WHERE discord_id_hmac IN (${placeholders})
+    `).bind(...users.map((user) => user.discordIdHmac)).all<{ discord_id_hmac: string }>();
+    existingHmacs = new Set(existing.results.map((row) => row.discord_id_hmac));
+  } catch {
+    return fail(c, 500, '参加者の重複を確認できませんでした。');
+  }
+  const duplicateExistingRows = users
+    .map((user, index) => existingHmacs.has(user.discordIdHmac) ? index + 1 : null)
+    .filter((row): row is number => row !== null);
+  if (duplicateExistingRows.length > 0) {
+    return c.json({
+      success: false,
+      message: 'すでに別の参加者へ登録されているDiscordアカウントがあります。',
+      code: 'BULK_DUPLICATE_EXISTING',
+      data: { rows: duplicateExistingRows },
+    }, 409);
+  }
+
+  const roleCounts = users.reduce((counts, user) => {
+    counts[user.role] += 1;
+    return counts;
+  }, { member: 0, manager: 0 });
+  const metadata = JSON.stringify({
+    created_count: users.length,
+    role_counts: roleCounts,
+    group_count: new Set(users.map((user) => user.groupId)).size,
+  });
+  const chunks: BulkUser[][] = [];
+  for (let index = 0; index < users.length; index += 25) {
+    chunks.push(users.slice(index, index + 25));
+  }
+  const insertStatements = chunks.map((chunk) => c.env.DB.prepare(`
+    INSERT INTO users (name, group_id, role, discord_id_hmac, is_manual_added)
+    VALUES ${chunk.map(() => '(?, ?, ?, ?, 1)').join(', ')}
+  `).bind(...chunk.flatMap((user) => [user.name, user.groupId, user.role, user.discordIdHmac])));
+  try {
+    const results = await c.env.DB.batch([
+      ...insertStatements,
+      c.env.DB.prepare(`
+        INSERT INTO audit_logs (actor_user_id, action_type, target_type, target_id, metadata_json)
+        VALUES (?, 'USER_BULK_CREATE', 'user_batch', NULL, ?)
+      `).bind(auth.user.id, metadata),
+    ]);
+    const insertedCount = results
+      .slice(0, insertStatements.length)
+      .reduce((total, result) => total + result.meta.changes, 0);
+    if (insertedCount !== users.length || results.at(-1)?.meta.changes !== 1) {
+      return fail(c, 500, '参加者の一括追加を完了できませんでした。');
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    if (/UNIQUE constraint failed/i.test(message)) {
+      return c.json({
+        success: false,
+        message: 'すでに登録されているDiscordアカウントがあります。',
+        code: 'BULK_DUPLICATE_EXISTING',
+        data: { rows: [] },
+      }, 409);
+    }
+    return fail(c, 500, '参加者の一括追加を完了できませんでした。');
+  }
+
+  return c.json({ success: true, data: { created_count: users.length } });
+});
+
 app.post('/api/admin/users', async (c) => {
   const roleError = requireRole(c, ['admin']);
   if (roleError) return roleError;
@@ -875,6 +1231,56 @@ app.post('/api/admin/users', async (c) => {
   } catch {
     return fail(c, 409, 'このDiscordアカウントは、すでに別の参加者へ登録されています。');
   }
+});
+
+app.delete('/api/admin/users/:id', async (c) => {
+  const roleError = requireRole(c, ['admin']);
+  if (roleError) return roleError;
+  const recentLoginError = requireRecentAdminLogin(c);
+  if (recentLoginError) return recentLoginError;
+  const auth = c.get('auth');
+  const userId = parsePositiveInteger(c.req.param('id'));
+  if (!userId) return fail(c, 422, '参加者を確認してください。');
+
+  let target: { id: number; role: UserRole } | null;
+  try {
+    target = await c.env.DB.prepare(`
+      SELECT id, role FROM users WHERE id = ? AND is_active = 1
+    `).bind(userId).first<{ id: number; role: UserRole }>();
+  } catch {
+    return fail(c, 500, '参加者の状態を確認できませんでした。');
+  }
+  if (!target) return fail(c, 404, '参加者が見つかりません。');
+  if (target.role === 'admin') {
+    return fail(c, 409, '管理者アカウントは利用停止できません。', 'ADMIN_DEACTIVATION_FORBIDDEN');
+  }
+
+  const now = nowSeconds();
+  try {
+    const results = await c.env.DB.batch([
+      c.env.DB.prepare(`
+        UPDATE users
+        SET is_active = 0, discord_id_hmac = NULL, updated_at = ?
+        WHERE id = ? AND is_active = 1 AND role != 'admin'
+      `).bind(now, userId),
+      c.env.DB.prepare(`
+        INSERT INTO audit_logs (actor_user_id, action_type, target_type, target_id, metadata_json)
+        SELECT ?, 'USER_DEACTIVATE', 'user', ?, '{"orders_preserved":true}'
+        WHERE changes() = 1
+      `).bind(auth.user.id, userId),
+      c.env.DB.prepare(`
+        UPDATE auth_sessions
+        SET revoked_at = ?
+        WHERE user_id = ? AND revoked_at IS NULL
+      `).bind(now, userId),
+    ]);
+    if (results[0].meta.changes !== 1 || results[1].meta.changes !== 1) {
+      return fail(c, 409, '参加者の状態が更新されました。画面を再読み込みしてください。');
+    }
+  } catch {
+    return fail(c, 500, '参加者を利用停止できませんでした。');
+  }
+  return c.json({ success: true, data: { deactivated: true } });
 });
 
 app.patch('/api/admin/users/:id', async (c) => {
