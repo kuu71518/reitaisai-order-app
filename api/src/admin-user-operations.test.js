@@ -26,6 +26,9 @@ function createState(overrides = {}) {
     auditLogs: [],
     batchCalls: [],
     addSessionBeforeResetBatch: false,
+    reportedGuardInsertChanges: null,
+    reportedUserDeleteChanges: null,
+    reportedGuardDeleteChanges: null,
     lastChanges: 0,
     ...overrides,
   };
@@ -113,7 +116,10 @@ function createDb(state) {
         : 0;
       if (changes === 1) state.oauthStates.add(bindings[0]);
       state.lastChanges = changes;
-      return result(changes);
+      return result(state.reportedGuardInsertChanges ?? changes);
+    }
+    if (sql.includes('AS acquired') && sql.includes('FROM oauth_states')) {
+      return result(0, [{ acquired: guardExists(bindings[0]) ? 1 : 0 }]);
     }
     if (sql.includes('DELETE FROM orders') && sql.includes('oauth_states')) {
       const changes = guardExists(bindings[0]) ? state.orders.length : 0;
@@ -136,7 +142,7 @@ function createDb(state) {
       const removed = guardExists(guardHash) ? state.users.filter((user) => user.role !== 'admin').length : 0;
       if (guardExists(guardHash)) state.users = state.users.filter((user) => user.role === 'admin');
       state.lastChanges = removed;
-      return result(removed);
+      return result(state.reportedUserDeleteChanges ?? removed);
     }
     if (sql.includes('DELETE FROM oauth_states') && sql.includes('state_hash != ?')) {
       const guardHash = bindings[0];
@@ -157,7 +163,7 @@ function createDb(state) {
     if (sql.includes('DELETE FROM oauth_states WHERE state_hash = ?')) {
       const changes = state.oauthStates.delete(bindings[0]) ? 1 : 0;
       state.lastChanges = changes;
-      return result(changes);
+      return result(state.reportedGuardDeleteChanges ?? changes);
     }
     return result(1);
   }
@@ -574,6 +580,11 @@ test('reset atomically deletes event data while preserving the administrator, cu
     oauthStates: new Set(['old-oauth-state']),
     menuItems: [{ id: 1 }, { id: 2 }],
     auditLogs: [{ action_type: 'AUTH_LOGIN' }],
+    // Simulate D1 metadata that differs from the application row counts even
+    // though the guard and the atomic batch both completed successfully.
+    reportedGuardInsertChanges: 0,
+    reportedUserDeleteChanges: 7,
+    reportedGuardDeleteChanges: 0,
   });
   const response = await app.request('/api/admin/data-reset', {
     method: 'POST',
@@ -604,5 +615,5 @@ test('reset atomically deletes event data while preserving the administrator, cu
     deleted_order_count: 2,
     deleted_session_count: 1,
   });
-  assert.equal(state.batchCalls.at(-1).length, 7);
+  assert.equal(state.batchCalls.at(-1).length, 8);
 });
