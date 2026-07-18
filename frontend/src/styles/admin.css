@@ -817,6 +817,10 @@
     flex: 1 1 140px;
   }
 
+  .admin-row-actions .admin-user-deactivate-button {
+    flex-basis: 100%;
+  }
+
   .admin-bulk-source-grid {
     grid-template-columns: 1fr;
   }

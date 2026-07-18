@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { apiRequest, getErrorMessage } from '../../lib/api';
 import { StatusNotice } from '../States';
 
-export default function UserDeleteAction({ user, disabled = false, onBusyChange, onDeleted }) {
+export default function UserDeleteAction({ user, disabled = false, onBusyChange, onDeactivated }) {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -16,7 +16,9 @@ export default function UserDeleteAction({ user, disabled = false, onBusyChange,
     wasConfirming.current = confirming;
   }, [confirming]);
 
-  if (user.role === 'admin') return null;
+  if (user.role === 'admin') {
+    return <span className="admin-readonly-label">管理者は利用停止できません</span>;
+  }
 
   const closeConfirmation = () => {
     if (busy) return;
@@ -24,21 +26,21 @@ export default function UserDeleteAction({ user, disabled = false, onBusyChange,
     setError('');
   };
 
-  const deleteUser = async () => {
+  const deactivateUser = async () => {
     if (busy || disabled) return;
     setBusy(true);
     setError('');
     onBusyChange?.(true);
-    let deleted = false;
+    let deactivated = false;
     try {
       await apiRequest(`/api/admin/users/${user.id}`, { method: 'DELETE' });
-      deleted = true;
-      onDeleted?.(user);
+      deactivated = true;
+      onDeactivated?.(user);
     } catch (requestError) {
-      setError(getErrorMessage(requestError, '参加者を削除できませんでした。'));
+      setError(getErrorMessage(requestError, '参加者の利用を停止できませんでした。'));
     } finally {
       setBusy(false);
-      if (!deleted) onBusyChange?.(false);
+      if (!deactivated) onBusyChange?.(false);
     }
   };
 
@@ -47,27 +49,27 @@ export default function UserDeleteAction({ user, disabled = false, onBusyChange,
       <button
         ref={triggerButtonRef}
         type="button"
-        className="admin-button admin-button-danger-subtle"
+        className="admin-button admin-button-danger-subtle admin-user-deactivate-button"
         onClick={() => setConfirming(true)}
         disabled={disabled}
       >
-        参加者から削除
+        この参加者の利用を停止
       </button>
     );
   }
 
-  const headingId = `admin-delete-user-${user.id}`;
+  const headingId = `admin-deactivate-user-${user.id}`;
   return (
     <div className="admin-inline-confirm" role="group" aria-labelledby={headingId}>
       <div className="admin-inline-confirm-copy">
-        <strong id={headingId}>{user.name}さんを参加者一覧から削除しますか？</strong>
-        <span>削除するとログインできなくなり、現在ログイン中の端末もログアウトします。過去の注文・会計・操作履歴は残ります。</span>
+        <strong id={headingId}>{user.name}さんの利用を停止しますか？</strong>
+        <span>利用停止するとログインできなくなり、現在ログイン中の端末もログアウトします。過去の注文・会計・操作履歴は残ります。</span>
       </div>
-      {error && <StatusNotice tone="danger" title="削除できませんでした" live>{error}</StatusNotice>}
+      {error && <StatusNotice tone="danger" title="利用停止できませんでした" live>{error}</StatusNotice>}
       <div className="admin-row-actions">
         <button ref={cancelButtonRef} type="button" className="admin-button admin-button-secondary" onClick={closeConfirmation} disabled={busy}>戻る</button>
-        <button type="button" className="admin-button admin-button-danger" onClick={deleteUser} disabled={busy || disabled}>
-          {busy ? '削除しています' : 'この参加者を削除'}
+        <button type="button" className="admin-button admin-button-danger" onClick={deactivateUser} disabled={busy || disabled}>
+          {busy ? '利用を停止しています' : '利用を停止する'}
         </button>
       </div>
     </div>

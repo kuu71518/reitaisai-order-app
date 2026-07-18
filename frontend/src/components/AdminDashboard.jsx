@@ -40,7 +40,7 @@ const AUDIT_LABELS = {
   ORDER_STATUS_UPDATE: '注文伝達済み',
   USER_CREATE: '参加者追加',
   USER_BULK_CREATE: '参加者一括追加',
-  USER_DEACTIVATE: '参加者削除',
+  USER_DEACTIVATE: '参加者の利用停止',
   USER_UPDATE: '参加者設定変更',
   MENU_CREATE: 'メニュー追加',
   EVENT_DATA_RESET: '開催データリセット',
@@ -346,7 +346,7 @@ export default function AdminDashboard() {
     return await refreshData({ tabId: 'people' });
   };
 
-  const handleUserDeleted = (user) => {
+  const handleUserDeactivated = (user) => {
     setUsers((current) => current.filter((item) => item.id !== user.id));
     setUserActions((current) => {
       const next = { ...current };
@@ -357,7 +357,7 @@ export default function AdminDashboard() {
     setLoadedTabs((current) => current.filter((tabId) => !['overview', 'orders', 'logs'].includes(tabId)));
     setNotice({
       tone: 'success',
-      title: `${user.name}さんを参加者一覧から削除しました。`,
+      title: `${user.name}さんの利用を停止しました。`,
       message: '本人はログインできなくなりました。過去の注文・会計・操作履歴は残ります。',
     });
   };
@@ -545,11 +545,11 @@ export default function AdminDashboard() {
             <p className="admin-eyebrow">登録済み</p>
             <h2 id="admin-people-heading">参加者一覧</h2>
           </div>
-          <p className="admin-panel-description">グループと権限は、編集後に保存したときだけ反映されます。</p>
+          <p className="admin-panel-description">参加者ごとに、登録内容の変更や利用停止ができます。</p>
         </div>
 
-        <StatusNotice tone="info" title="削除しても過去の記録は残ります">
-          参加者を削除するとログインできなくなります。過去の注文・会計・操作履歴は確認用に残ります。
+        <StatusNotice tone="info" title="利用を止めるときは、参加者カードの赤いボタンを押します">
+          利用停止すると本人はログインできなくなります。過去の注文・会計・操作履歴は確認用に残ります。
         </StatusNotice>
 
         {users.length === 0 ? (
@@ -634,7 +634,7 @@ export default function AdminDashboard() {
                         user={user}
                         disabled={action.busy}
                         onBusyChange={(busy) => setUserAction(user.id, { busy, error: '' })}
-                        onDeleted={handleUserDeleted}
+                        onDeactivated={handleUserDeactivated}
                       />
                     </div>
                   )}
