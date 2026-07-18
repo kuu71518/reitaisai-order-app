@@ -175,10 +175,17 @@ export default function AdminDashboard() {
   };
 
   const existingGroups = useMemo(() => {
-    const groups = [...new Set(users.map((user) => user.group_id).filter(Boolean))];
+    const groups = [...new Set(
+      users
+        .filter((user) => user.role !== 'admin')
+        .map((user) => user.group_id)
+        .filter(Boolean),
+    )];
     return groups.length > 0 ? groups : DEFAULT_GROUPS;
   }, [users]);
-  const selectedNewUserGroup = newUser.group_id || existingGroups[0] || '';
+  const selectedNewUserGroup = existingGroups.includes(newUser.group_id)
+    ? newUser.group_id
+    : existingGroups[0] || '';
 
   const menuCategories = useMemo(() => {
     return [...new Set(adminMenu.map((item) => item.category).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ja'));
@@ -705,7 +712,7 @@ export default function AdminDashboard() {
         </form>
       </section>
 
-      <BulkUserImport onComplete={refreshPeopleAfterBulkAdd} />
+      <BulkUserImport groups={existingGroups} onComplete={refreshPeopleAfterBulkAdd} />
     </div>
   );
 

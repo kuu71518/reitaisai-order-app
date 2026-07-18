@@ -1,22 +1,30 @@
-export const BULK_USER_HEADERS = ['参加者名', 'グループ', '権限', 'DiscordユーザーID'];
 export const MAX_BULK_USERS = 100;
 
-const ROLE_ALIASES = new Map([
-  ['一般参加者', 'member'],
-  ['member', 'member'],
-  ['担当者', 'manager'],
-  ['manager', 'manager'],
-]);
+const ASSIGNABLE_ROLES = new Set(['member', 'manager']);
 
-function errorAt(line, message) {
-  return { line, message: `${line}行目：${message}` };
+function generalError(field, message) {
+  return { field, line: 0, message };
+}
+
+function errorAt(line, field, message) {
+  return { field, line, message: `${line}人目：${message}` };
 }
 
 function normalizeLines(value) {
-  return String(value ?? '')
+  const lines = String(value ?? '')
     .replace(/^\uFEFF/, '')
     .replace(/\r\n?/g, '\n')
-    .split('\n');
+    .split('\n')
+    .map((line) => line.trim());
+
+  // 末尾の改行だけを無視する。先頭・途中の空行は、名前とIDの対応を
+  // ずらさないため、その位置に残して入力エラーとして扱う。
+  while (lines.length > 0 && lines.at(-1) === '') lines.pop();
+  return lines;
+}
+
+export function countBulkUserLines(value) {
+  return normalizeLines(value).length;
 }
 
 export function maskDiscordUserId(value) {
@@ -24,81 +32,91 @@ export function maskDiscordUserId(value) {
   return id.length >= 4 ? `末尾${id.slice(-4)}` : '末尾----';
 }
 
-export function parseBulkUsers(value) {
-  const lines = normalizeLines(value);
-  const firstContentIndex = lines.findIndex((line) => line.trim() !== '');
+export function parseBulkUsers({ names = '', discordUserIds = '', groupId = '', role = 'member' } = {}) {
+  const nameLines = normalizeLines(names);
+  const discordIdLines = normalizeLines(discordUserIds);
+  const normalizedGroupId = String(groupId ?? '').trim();
+  const normalizedRole = String(role ?? '').trim().toLowerCase();
 
-  if (firstContentIndex < 0) {
-    return { rows: [], errors: [{ line: 0, message: '参加者一覧を貼り付けてください。' }] };
-  }
-
-  const headerLine = firstContentIndex + 1;
-  const headers = lines[firstContentIndex].split('\t').map((cell) => cell.trim());
-  const headerIsValid = headers.length === BULK_USER_HEADERS.length
-    && BULK_USER_HEADERS.every((header, index) => headers[index] === header);
-
-  if (!headerIsValid) {
+  if (nameLines.length === 0 && discordIdLines.length === 0) {
     return {
       rows: [],
-      errors: [errorAt(headerLine, `先頭行を「${BULK_USER_HEADERS.join(' / ')}」の4列にしてください。`)],
+      errors: [generalError('lists', '参加者名とDiscordユーザーIDを入力してください。')],
+    };
+  }
+  if (nameLines.length === 0) {
+    return {
+      rows: [],
+      errors: [generalError('names', '参加者名を1人ずつ改行して入力してください。')],
+    };
+  }
+  if (discordIdLines.length === 0) {
+    return {
+      rows: [],
+      errors: [generalError('discordUserIds', 'DiscordユーザーIDを1人ずつ改行して入力してください。')],
     };
   }
 
-  const dataLines = lines
-    .map((line, index) => ({ line, sourceLine: index + 1 }))
-    .slice(firstContentIndex + 1)
-    .filter(({ line }) => line.trim() !== '');
-
-  if (dataLines.length === 0) {
-    return { rows: [], errors: [{ line: 0, message: 'ヘッダーの下に、1人以上の参加者を入力してください。' }] };
+  const largestCount = Math.max(nameLines.length, discordIdLines.length);
+  if (largestCount > MAX_BULK_USERS) {
+    return {
+      rows: [],
+      errors: [generalError('lists', `一度に追加できるのは${MAX_BULK_USERS}人までです。`)],
+    };
   }
-  if (dataLines.length > MAX_BULK_USERS) {
-    return { rows: [], errors: [{ line: 0, message: `一度に追加できるのは${MAX_BULK_USERS}人までです。` }] };
+  if (nameLines.length !== discordIdLines.length) {
+    return {
+      rows: [],
+      errors: [generalError(
+        'count',
+        `参加者名は${nameLines.length}人、DiscordユーザーIDは${discordIdLines.length}人です。同じ人数にしてください。`,
+      )],
+    };
   }
 
-  const rows = [];
   const errors = [];
+  const rows = [];
   const firstLineByDiscordId = new Map();
+  const sharedValuesAreValid = normalizedGroupId.length >= 1
+    && normalizedGroupId.length <= 80
+    && ASSIGNABLE_ROLES.has(normalizedRole);
 
-  dataLines.forEach(({ line, sourceLine }) => {
-    const cells = line.split('\t').map((cell) => cell.trim());
-    if (cells.length !== BULK_USER_HEADERS.length) {
-      errors.push(errorAt(sourceLine, '列数が異なります。4列をまとめてコピーしてください。'));
-      return;
-    }
+  if (!normalizedGroupId || normalizedGroupId.length > 80) {
+    errors.push(generalError('groupId', '全員のグループを選んでください。'));
+  }
+  if (!ASSIGNABLE_ROLES.has(normalizedRole)) {
+    errors.push(generalError('role', '全員の権限は「一般参加者」または「担当者」から選んでください。'));
+  }
 
-    const [name, groupId, roleLabel, discordUserId] = cells;
-    const role = ROLE_ALIASES.get(roleLabel.toLowerCase());
+  nameLines.forEach((name, index) => {
+    const line = index + 1;
+    const discordUserId = discordIdLines[index];
     let rowIsValid = true;
 
     if (!name || name.length > 80) {
-      errors.push(errorAt(sourceLine, '参加者名は1〜80文字で入力してください。'));
+      errors.push(errorAt(line, 'names', '参加者名は1〜80文字で入力してください。'));
       rowIsValid = false;
-    }
-    if (!groupId || groupId.length > 80) {
-      errors.push(errorAt(sourceLine, 'グループは1〜80文字で入力してください。'));
+    } else if (name.includes('\t')) {
+      errors.push(errorAt(line, 'names', '参加者名だけを入力し、1人ごとに改行してください。'));
       rowIsValid = false;
-    }
-    if (!role) {
-      errors.push(errorAt(sourceLine, '権限は「一般参加者」または「担当者」で入力してください。'));
-      rowIsValid = false;
-    }
-    if (!/^\d{16,22}$/.test(discordUserId)) {
-      errors.push(errorAt(sourceLine, 'DiscordユーザーIDは数字16〜22桁で入力してください。'));
-      rowIsValid = false;
-    } else if (firstLineByDiscordId.has(discordUserId)) {
-      errors.push(errorAt(sourceLine, `DiscordユーザーIDが${firstLineByDiscordId.get(discordUserId)}行目と重複しています。`));
-      rowIsValid = false;
-    } else {
-      firstLineByDiscordId.set(discordUserId, sourceLine);
     }
 
-    if (rowIsValid) {
+    if (!/^\d{16,22}$/.test(discordUserId)) {
+      errors.push(errorAt(line, 'discordUserIds', 'DiscordユーザーIDは数字16〜22桁を1人につき1行で入力してください。'));
+      rowIsValid = false;
+    } else if (firstLineByDiscordId.has(discordUserId)) {
+      errors.push(errorAt(line, 'discordUserIds', `DiscordユーザーIDが${firstLineByDiscordId.get(discordUserId)}人目と重複しています。`));
+      rowIsValid = false;
+    } else {
+      firstLineByDiscordId.set(discordUserId, line);
+    }
+
+    if (rowIsValid && sharedValuesAreValid) {
       rows.push({
-        sourceLine,
+        sourceLine: line,
         name,
-        group_id: groupId,
-        role,
+        group_id: normalizedGroupId,
+        role: normalizedRole,
         discord_user_id: discordUserId,
       });
     }
