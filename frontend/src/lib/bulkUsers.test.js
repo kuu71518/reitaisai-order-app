@@ -1,60 +1,122 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { BULK_USER_HEADERS, MAX_BULK_USERS, maskDiscordUserId, parseBulkUsers } from './bulkUsers.js';
+import { countBulkUserLines, MAX_BULK_USERS, maskDiscordUserId, parseBulkUsers } from './bulkUsers.js';
 
-const header = BULK_USER_HEADERS.join('\t');
-
-test('Excelのタブ区切りをCRLF・空行・前後空白から正規化する', () => {
-  const result = parseBulkUsers(`\r\n ${header} \r\n 霊夢 \t Aグループ \t 一般参加者 \t 1234567890123456 \r\n\r\n魔理沙\tBグループ\tmanager\t12345678901234567\r\n`);
+test('二つの一覧を同じ順番で組み合わせ、共通グループと権限を適用する', () => {
+  const result = parseBulkUsers({
+    names: '\uFEFF 霊夢 \r\n 魔理沙 \r\n',
+    discordUserIds: ' 1234567890123456 \r\n 12345678901234567 \r\n',
+    groupId: ' Aグループ ',
+    role: 'manager',
+  });
 
   assert.deepEqual(result.errors, []);
   assert.deepEqual(result.rows, [
-    { sourceLine: 3, name: '霊夢', group_id: 'Aグループ', role: 'member', discord_user_id: '1234567890123456' },
-    { sourceLine: 5, name: '魔理沙', group_id: 'Bグループ', role: 'manager', discord_user_id: '12345678901234567' },
+    { sourceLine: 1, name: '霊夢', group_id: 'Aグループ', role: 'manager', discord_user_id: '1234567890123456' },
+    { sourceLine: 2, name: '魔理沙', group_id: 'Aグループ', role: 'manager', discord_user_id: '12345678901234567' },
   ]);
 });
 
-test('ヘッダーは必須で、4列の順番も固定する', () => {
-  const result = parseBulkUsers('霊夢\tAグループ\t一般参加者\t1234567890123456');
+test('名前とDiscordユーザーIDの人数が違う場合は一件も組み合わせない', () => {
+  const result = parseBulkUsers({
+    names: '霊夢\n魔理沙\n咲夜',
+    discordUserIds: '1234567890123456\n1234567890123457',
+    groupId: 'Aグループ',
+    role: 'member',
+  });
 
   assert.equal(result.rows.length, 0);
-  assert.match(result.errors[0].message, /^1行目：/);
-  assert.match(result.errors[0].message, /先頭行/);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0].message, /参加者名は3人、DiscordユーザーIDは2人/);
 });
 
-test('日本語とAPI用の一般参加者・担当者権限を受け付ける', () => {
-  const result = parseBulkUsers(`${header}\n霊夢\tA\tmember\t1234567890123456\n魔理沙\tA\t担当者\t1234567890123457`);
+test('先頭・途中の空行を残して行ずれを防ぎ、末尾の改行だけ無視する', () => {
+  const result = parseBulkUsers({
+    names: '\n霊夢\n\n魔理沙\n',
+    discordUserIds: '\n1234567890123456\n1234567890123457\n1234567890123458\n',
+    groupId: 'Aグループ',
+    role: 'member',
+  });
 
-  assert.deepEqual(result.errors, []);
-  assert.deepEqual(result.rows.map((row) => row.role), ['member', 'manager']);
+  assert.equal(result.rows.length, 2);
+  assert.deepEqual(result.rows.map((row) => row.sourceLine), [2, 4]);
+  const nameErrors = result.errors.filter((error) => error.field === 'names');
+  assert.deepEqual(nameErrors.map((error) => error.line), [1, 3]);
+  assert.match(nameErrors[0].message, /^1人目：/);
+  assert.match(nameErrors[1].message, /^3人目：/);
+  assert.equal(countBulkUserLines('Aさん\nBさん\n'), 2);
 });
 
-test('不正な列・権限・IDは行番号付きで示し、ID全文をエラーに含めない', () => {
+test('共通グループと権限も送信前に再検証する', () => {
+  const base = {
+    names: '霊夢',
+    discordUserIds: '1234567890123456',
+  };
+  const noGroup = parseBulkUsers({ ...base, groupId: '', role: 'member' });
+  const adminRole = parseBulkUsers({ ...base, groupId: 'Aグループ', role: 'admin' });
+
+  assert.equal(noGroup.rows.length, 0);
+  assert.match(noGroup.errors[0].message, /グループを選んで/);
+  assert.equal(adminRole.rows.length, 0);
+  assert.match(adminRole.errors[0].message, /一般参加者.*担当者/);
+});
+
+test('不正な名前・表貼り付け・IDは何人目かを示し、ID全文をエラーに含めない', () => {
   const secretId = '123456789012345';
-  const result = parseBulkUsers(`${header}\n霊夢\tA\tadmin\t${secretId}\n魔理沙\tA\t一般参加者`);
+  const result = parseBulkUsers({
+    names: `霊夢\tAグループ\n魔理沙`,
+    discordUserIds: `${secretId}\nユーザー名`,
+    groupId: 'Aグループ',
+    role: 'member',
+  });
   const messages = result.errors.map((error) => error.message).join('\n');
 
-  assert.match(messages, /2行目：/);
-  assert.match(messages, /3行目：/);
+  assert.match(messages, /1人目：/);
+  assert.match(messages, /2人目：/);
   assert.doesNotMatch(messages, new RegExp(secretId));
 });
 
-test('入力内のDiscordユーザーID重複を行番号で検出する', () => {
-  const result = parseBulkUsers(`${header}\n霊夢\tA\t一般参加者\t1234567890123456\n魔理沙\tA\t担当者\t1234567890123456`);
+test('入力内のDiscordユーザーID重複を何人目かで検出する', () => {
+  const result = parseBulkUsers({
+    names: '霊夢\n魔理沙',
+    discordUserIds: '1234567890123456\n1234567890123456',
+    groupId: 'Aグループ',
+    role: 'member',
+  });
 
   assert.equal(result.rows.length, 1);
   assert.equal(result.errors.length, 1);
-  assert.equal(result.errors[0].message, '3行目：DiscordユーザーIDが2行目と重複しています。');
+  assert.equal(result.errors[0].message, '2人目：DiscordユーザーIDが1人目と重複しています。');
 });
 
 test('一括追加は1人以上100人以下に制限する', () => {
-  const noRows = parseBulkUsers(header);
-  const tooManyRows = Array.from({ length: MAX_BULK_USERS + 1 }, (_, index) => (
-    `参加者${index}\tA\t一般参加者\t${String(10 ** 15 + index).padStart(16, '1')}`
-  ));
-  const tooMany = parseBulkUsers([header, ...tooManyRows].join('\n'));
+  const noRows = parseBulkUsers();
+  const validNames = Array.from({ length: MAX_BULK_USERS }, (_, index) => `参加者${index + 1}`);
+  const validDiscordUserIds = Array.from(
+    { length: MAX_BULK_USERS },
+    (_, index) => String(9000000000000000n + BigInt(index)),
+  );
+  const maximum = parseBulkUsers({
+    names: validNames.join('\n'),
+    discordUserIds: validDiscordUserIds.join('\n'),
+    groupId: 'Aグループ',
+    role: 'member',
+  });
+  const tooManyNames = Array.from({ length: MAX_BULK_USERS + 1 }, (_, index) => `参加者${index + 1}`);
+  const tooManyDiscordUserIds = Array.from(
+    { length: MAX_BULK_USERS + 1 },
+    (_, index) => String(9000000000000000n + BigInt(index)),
+  );
+  const tooMany = parseBulkUsers({
+    names: tooManyNames.join('\n'),
+    discordUserIds: tooManyDiscordUserIds.join('\n'),
+    groupId: 'Aグループ',
+    role: 'member',
+  });
 
-  assert.match(noRows.errors[0].message, /1人以上/);
+  assert.match(noRows.errors[0].message, /参加者名とDiscordユーザーID/);
+  assert.equal(maximum.errors.length, 0);
+  assert.equal(maximum.rows.length, MAX_BULK_USERS);
   assert.match(tooMany.errors[0].message, /100人まで/);
 });
 

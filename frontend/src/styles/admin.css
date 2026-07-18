@@ -457,62 +457,93 @@
   border-top: 6px solid var(--gold);
 }
 
-.admin-import-help {
+.admin-bulk-guide {
+  display: grid;
+  gap: 4px;
   margin-bottom: 20px;
-  overflow: hidden;
-  border: 1px solid var(--line);
+  border: 1px solid #d9bd73;
+  border-left: 6px solid var(--gold);
   border-radius: 13px;
-  background: var(--surface-soft);
+  background: var(--gold-soft);
+  padding: 14px 16px;
 }
 
-.admin-import-help summary {
-  display: flex;
-  align-items: center;
-  min-height: 48px;
-  padding: 10px 14px;
+.admin-bulk-guide strong {
   color: var(--indigo);
-  font-weight: 800;
-  cursor: pointer;
 }
 
-.admin-import-help[open] summary {
-  border-bottom: 1px solid var(--line);
+.admin-bulk-guide span {
+  color: var(--muted);
+  font-size: 0.88rem;
+  overflow-wrap: anywhere;
 }
 
-.admin-import-help p {
-  margin: 0;
-  padding: 14px 14px 0;
+.admin-bulk-source-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.admin-bulk-textarea {
+  min-height: 170px;
+  resize: vertical;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  overflow: auto;
+}
+
+.admin-bulk-id-list {
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-bulk-count-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-soft);
+  padding: 11px 14px;
   color: var(--muted);
   font-size: 0.88rem;
 }
 
-.admin-import-header-example {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 1px;
-  margin: 14px;
-  overflow: hidden;
-  border: 1px solid var(--line-strong);
-  border-radius: 10px;
-  background: var(--line-strong);
-}
-
-.admin-import-header-example span {
-  min-width: 0;
-  background: var(--surface);
-  padding: 9px 10px;
+.admin-bulk-count-summary strong {
   color: var(--ink);
-  font-size: 0.78rem;
-  font-weight: 800;
-  overflow-wrap: anywhere;
 }
 
-.admin-bulk-textarea {
-  min-height: 180px;
-  resize: vertical;
-  line-height: 1.55;
-  white-space: pre;
-  overflow: auto;
+.admin-bulk-count-summary b {
+  margin-left: auto;
+  color: #27603c;
+}
+
+.admin-bulk-count-summary.is-mismatch {
+  border-color: #e5aaa5;
+  background: var(--danger-soft);
+}
+
+.admin-bulk-count-summary.is-mismatch b {
+  color: #84211c;
+}
+
+.admin-bulk-settings-hint {
+  margin: -8px 0 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.admin-bulk-result {
+  display: grid;
+  gap: 18px;
+  scroll-margin-top: 90px;
+}
+
+.admin-bulk-result:focus {
+  outline: 3px solid rgba(47, 113, 199, 0.28);
+  outline-offset: 4px;
+  border-radius: 14px;
 }
 
 .admin-operation-errors {
@@ -567,9 +598,26 @@
   transform: rotate(-3deg);
 }
 
+.admin-bulk-preview-settings {
+  display: grid;
+  gap: 2px;
+  border-bottom: 1px solid var(--line);
+  background: var(--gold-soft);
+  padding: 12px 17px;
+}
+
+.admin-bulk-preview-settings span {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.admin-bulk-preview-settings strong {
+  color: var(--indigo);
+  overflow-wrap: anywhere;
+}
+
 .admin-bulk-preview-list {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
   max-height: 360px;
   margin: 0;
   overflow: auto;
@@ -583,10 +631,6 @@
   gap: 2px;
   border-bottom: 1px dashed var(--line);
   padding: 12px 15px;
-}
-
-.admin-bulk-preview-list li:nth-child(odd) {
-  border-right: 1px dashed var(--line);
 }
 
 .admin-bulk-preview-list li > span,
@@ -773,7 +817,10 @@
     flex: 1 1 140px;
   }
 
-  .admin-import-header-example,
+  .admin-bulk-source-grid {
+    grid-template-columns: 1fr;
+  }
+
   .admin-reset-summary {
     grid-template-columns: 1fr 1fr;
   }
@@ -797,18 +844,18 @@
   .admin-form-grid,
   .admin-quick-actions,
   .admin-order-preview,
-  .admin-import-header-example,
-  .admin-bulk-preview-list,
+  .admin-bulk-source-grid,
   .admin-reset-summary {
     grid-template-columns: 1fr;
   }
 
-  .admin-bulk-preview-list li:nth-child(odd) {
-    border-right: 0;
+  .admin-bulk-textarea {
+    min-height: 160px;
   }
 
-  .admin-bulk-textarea {
-    min-height: 220px;
+  .admin-bulk-count-summary b {
+    flex-basis: 100%;
+    margin-left: 0;
   }
 
   .admin-inline-confirm,
