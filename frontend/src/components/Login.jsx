@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { getDiscordLoginUrl } from '../lib/api';
 import { StatusNotice } from './States';
+import VenueGuide from './VenueGuide';
 
 const AUTH_MESSAGES = {
   not_registered: {
@@ -33,7 +34,7 @@ function readAuthResult() {
   }
 }
 
-export default function Login({ notice = '', sessionError = '' }) {
+export default function Login({ notice = '', sessionError = '', onRetrySession }) {
   const [authResult] = useState(readAuthResult);
   const [isLeaving, setIsLeaving] = useState(false);
   const authMessage = AUTH_MESSAGES[authResult];
@@ -59,24 +60,38 @@ export default function Login({ notice = '', sessionError = '' }) {
           </div>
         </header>
 
+        <VenueGuide compact />
+
         <div className="login-message">
-          <strong>Discordで本人確認して始めます</strong>
-          <span>文字入力はありません。確認後、この注文画面へ自動で戻ります。</span>
+          <strong>初回はDiscordで本人確認</strong>
+          <span>同じブラウザでは、初回認証から最長30日間、自動でログインします。</span>
         </div>
 
         {notice && <StatusNotice tone="success" title={notice} />}
-        {sessionError && <StatusNotice tone="danger" title="ログイン状態を確認できませんでした" live>{sessionError}</StatusNotice>}
+        {sessionError && <StatusNotice tone="danger" title="ログイン状態を確認できませんでした" live action={(
+          <button type="button" className="small-button" onClick={onRetrySession}>もう一度確認する</button>
+        )}>{sessionError}</StatusNotice>}
         {authMessage && (
           <StatusNotice tone={authMessage.tone} title={authMessage.title} live>
             {authMessage.message}
           </StatusNotice>
         )}
+        <a
+          className={isLeaving ? 'discord-login-button is-loading' : 'discord-login-button'}
+          href={getDiscordLoginUrl()}
+          onClick={() => setIsLeaving(true)}
+          aria-busy={isLeaving}
+        >
+          <span className="discord-button-mark" aria-hidden="true">●●</span>
+          <span>{isLeaving ? 'Discordを開いています…' : 'Discordでログイン'}</span>
+        </a>
+
         <ol className="discord-login-steps" aria-label="ログインの流れ">
           <li>
             <span aria-hidden="true">1</span>
             <div>
               <strong>Discordを開く</strong>
-              <small>下のボタンを押します。</small>
+              <small>ログインボタンを押します。</small>
             </div>
           </li>
           <li>
@@ -88,22 +103,12 @@ export default function Login({ notice = '', sessionError = '' }) {
           </li>
         </ol>
 
-        <a
-          className={isLeaving ? 'discord-login-button is-loading' : 'discord-login-button'}
-          href={getDiscordLoginUrl()}
-          onClick={() => setIsLeaving(true)}
-          aria-busy={isLeaving}
-        >
-          <span className="discord-button-mark" aria-hidden="true">●●</span>
-          <span>{isLeaving ? 'Discordを開いています…' : 'Discordでログイン'}</span>
-        </a>
-
-        <div className="discord-privacy-note">
-          <strong>確認する情報</strong>
-          <span>アカウントIDを一時的に照合します。IDそのもの・表示名・メッセージは保存しません。</span>
-        </div>
-
-        <p className="login-help">ログインできないときは、管理者に利用登録済みか確認してください。</p>
+        <details className="login-details">
+          <summary>ログインについて・困ったとき</summary>
+          <p>アカウントIDを一時的に照合します。IDそのもの・表示名・メッセージは保存しません。</p>
+          <p>共用端末では、利用後にログアウトしてください。期限切れ・別のブラウザ・Cookie削除後は再度ログインが必要です。</p>
+          <p>ログインできないときは、管理者に利用登録済みか確認してください。</p>
+        </details>
       </main>
     </div>
   );

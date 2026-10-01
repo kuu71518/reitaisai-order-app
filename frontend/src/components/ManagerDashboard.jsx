@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { apiRequest, getErrorMessage } from '../lib/api';
 import { formatTime } from '../lib/format';
 import { EmptyState, LoadingState, ScreenIntro, StatusNotice } from './States';
+import ConfirmDialog from './ConfirmDialog';
 
 export default function ManagerDashboard({
   currentUser,
@@ -16,6 +17,7 @@ export default function ManagerDashboard({
   const [busyOrderId, setBusyOrderId] = useState(null);
   const [isCompleting, setIsCompleting] = useState(false);
   const [feedback, setFeedback] = useState(null);
+  const [ordersToComplete, setOrdersToComplete] = useState(null);
 
   const groupedOrders = useMemo(() => {
     const groups = new Map();
@@ -84,9 +86,10 @@ export default function ManagerDashboard({
   };
 
   const markAllAsOrdered = async () => {
-    if (orders.length === 0 || isCompleting || hasUnsavedQuantityDrafts) return;
-    const orderIds = orders.map((order) => order.id);
-    if (!window.confirm(`表示中の${orderIds.length}件を「店員へ伝達済み」にしますか？\nまだ伝えていない注文がないか確認してください。`)) return;
+    if (!ordersToComplete?.length || isCompleting || hasUnsavedQuantityDrafts) return;
+    // Only update the orders shown when confirmation was opened. New arrivals
+    // during the dialog remain pending for the next handoff to the restaurant.
+    const orderIds = ordersToComplete;
 
     setIsCompleting(true);
     try {
@@ -101,8 +104,10 @@ export default function ManagerDashboard({
         showFeedback('warning', `${updatedCount}件を注文済みにしました`, `${orderIds.length - updatedCount}件は、ほかの操作で状態が変わっていたため更新しませんでした。`);
       }
       setQuantityDrafts({});
+      setOrdersToComplete(null);
       await refreshOrders();
     } catch (error) {
+      setOrdersToComplete(null);
       showFeedback('danger', '注文済みに変更できませんでした', getErrorMessage(error));
     } finally {
       setIsCompleting(false);
@@ -113,7 +118,7 @@ export default function ManagerDashboard({
     <section className="screen manager-screen">
       <ScreenIntro
         eyebrow={`${currentUser.group_id} 担当者`}
-        title="届いた注文をまとめる"
+        title="注文を取りまとめる"
         description="個数を確認し、店員へ伝えた後にまとめて「伝達済み」にします。"
         action={(
           <button type="button" className="secondary-button compact-button" onClick={() => refreshOrders()} disabled={isRefreshing}>
@@ -153,7 +158,6 @@ export default function ManagerDashboard({
       <section className="manager-order-section" aria-labelledby="pending-orders-title">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">手順 1・2</p>
             <h2 id="pending-orders-title">個数を確認して店員へ伝える</h2>
           </div>
         </div>
@@ -231,7 +235,7 @@ export default function ManagerDashboard({
             <button
               type="button"
               className="primary-button"
-              onClick={markAllAsOrdered}
+              onClick={() => setOrdersToComplete(orders.map((order) => order.id))}
               disabled={isCompleting || busyOrderId !== null || hasUnsavedQuantityDrafts}
               aria-describedby={hasUnsavedQuantityDrafts ? 'complete-orders-disabled-reason' : undefined}
             >
@@ -240,38 +244,20 @@ export default function ManagerDashboard({
           </div>
         )}
 
-        <StatusNotice tone="info" title="注文の取消は現在準備中です">
-          間違った注文は、管理者へ直接伝えてください。反応しない取消ボタンは表示していません。
-        </StatusNotice>
       </section>
 
-      <section className="notification-card" aria-labelledby="notification-title">
+      <details className="manager-help">
+        <summary>困ったとき・注文の訂正</summary>
         <div>
-          <p className="eyebrow">お知らせ</p>
-          <h2 id="notification-title">新着注文の通知</h2>
-          <strong className="notification-state state-paused">安全確認中</strong>
-          <p>利用者と通知先を安全に結び付ける仕組みを準備しています。注文一覧は自動更新されます。</p>
-        </div>
-      </section>
-
-      <details className="advanced-actions">
-        <summary>
-          <span>その他の操作</span>
-          <small>安全な参加者API準備中</small>
-        </summary>
-        <div className="advanced-grid">
-          <section className="utility-card">
-            <div>
-              <p className="eyebrow">参加者管理</p>
-              <h2>安全な参加者API準備中</h2>
-              <p>
-                担当グループだけを安全に扱える仕組みが整うまで、参加者の追加と特別料金の登録を停止しています。
-                必要な変更は管理者へ連絡してください。
-              </p>
-            </div>
-          </section>
+          <p>注文一覧は5秒ごとに更新されます。通信エラーが出た場合は「今すぐ更新」で確認してください。</p>
+          <p>注文の取消や参加者の変更は、管理者へ直接伝えてください。</p>
         </div>
       </details>
+      <ConfirmDialog open={Boolean(ordersToComplete)} title="店員へ伝え終わりましたか？"
+        confirmLabel={`${ordersToComplete?.length || 0}件を伝達済みにする`} busy={isCompleting}
+        onConfirm={markAllAsOrdered} onCancel={() => setOrdersToComplete(null)}>
+        <p>確認を開いた時点の{ordersToComplete?.length || 0}件を、注文待ちの一覧から外します。まだ伝えていない注文があれば「戻る」を押してください。</p>
+      </ConfirmDialog>
     </section>
   );
 }

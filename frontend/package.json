@@ -9,14 +9,17 @@
   "packageManager": "npm@10.9.2",
   "scripts": {
     "dev": "vite",
+    "demo": "vite --config vite.demo.config.js --mode demo --host 127.0.0.1 --port 5174 --strictPort",
     "build": "vite build && node scripts/verify-build.mjs",
     "lint": "eslint .",
     "test": "node --test src/lib/*.test.js",
     "preview": "vite preview"
   },
   "dependencies": {
+    "fflate": "0.8.3",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
+    "read-excel-file": "9.3.10",
     "swr": "^2.4.1"
   },
   "devDependencies": {

@@ -1,6 +1,6 @@
 # 秘密情報・個人情報の境界
 
-更新日: 2026-07-15
+更新日: 2026-09-14
 
 この文書には実値を記録しません。設定名、保存先、取扱いだけを定義します。
 
@@ -33,6 +33,7 @@
 
 - Discord OAuth access token / refresh tokenは保存せず、session発行後に破棄する。
 - ブラウザへはランダムなsession tokenをSecure・HttpOnly・SameSite=Lax Cookieで渡す。
+- 新規sessionはDiscord認証から最長30日の固定期限とし、利用による無制限の延長はしない。共用端末は利用後logoutし、利用停止・ログイン許可解除時の失効を維持する。[ログイン保持の詳細](LOGIN_SESSION.md)
 - D1へはsession tokenのSHA-256 hashだけを保存する。
 - CSRF tokenはsession tokenとドメイン分離して導出し、D1へ生値を保存しない。
 - OAuth `state`は生値をHttpOnly Cookie、hashをD1へ短時間保存し、一度だけ消費する。

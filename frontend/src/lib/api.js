@@ -33,8 +33,8 @@ function notifySessionExpired() {
   }
 }
 
-export async function loadSession() {
-  const payload = await apiRequest('/api/auth/me', { notifyAuthExpired: false });
+export async function loadSession({ signal } = {}) {
+  const payload = await apiRequest('/api/auth/me', { notifyAuthExpired: false, signal });
   if (!payload?.user || typeof payload.csrf_token !== 'string' || !payload.csrf_token) {
     clearSessionToken();
     throw new ApiError(RESPONSE_FORMAT_ERROR, 500, payload);
@@ -104,8 +104,9 @@ export async function apiRequest(path, options = {}) {
   return payload ?? { success: true };
 }
 
-export function apiFetcher(path) {
-  return apiRequest(path);
+export function apiFetcher(key) {
+  // SWR includes the user scope in its cache key; only the URL goes to the API.
+  return apiRequest(Array.isArray(key) ? key[0] : key);
 }
 
 export function getErrorMessage(error, fallback = '処理を完了できませんでした。') {

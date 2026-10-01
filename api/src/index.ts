@@ -20,8 +20,10 @@ import {
 } from './security.js';
 import type { AppEnv, AuthContext, Bindings, SessionUser, UserRole } from './types.js';
 
-const SESSION_IDLE_SECONDS = 5 * 60 * 60;
-const SESSION_ABSOLUTE_SECONDS = 12 * 60 * 60;
+// Keep this browser signed in for at most 30 days after Discord authentication.
+// Activity must not extend that deadline or refresh the administrator auth time.
+const SESSION_ABSOLUTE_SECONDS = 30 * 24 * 60 * 60;
+const SESSION_IDLE_SECONDS = SESSION_ABSOLUTE_SECONDS;
 const OAUTH_STATE_SECONDS = 10 * 60;
 const SESSION_TOUCH_SECONDS = 5 * 60;
 const RECENT_ADMIN_AUTH_SECONDS = 5 * 60;
@@ -249,6 +251,7 @@ async function loadSession(c: Context<AppEnv>): Promise<AuthContext | null> {
       AND s.idle_expires_at > ?
       AND s.absolute_expires_at > ?
       AND u.is_active = 1
+      AND u.discord_id_hmac IS NOT NULL
     LIMIT 1
   `).bind(tokenHash, now, now).first<SessionRow>();
 
@@ -260,7 +263,7 @@ async function loadSession(c: Context<AppEnv>): Promise<AuthContext | null> {
   if (now - row.last_seen_at >= SESSION_TOUCH_SECONDS) {
     await c.env.DB.prepare(`
       UPDATE auth_sessions
-      SET last_seen_at = ?, idle_expires_at = ?
+      SET last_seen_at = ?, idle_expires_at = MIN(?, absolute_expires_at)
       WHERE id = ? AND revoked_at IS NULL
     `).bind(now, now + SESSION_IDLE_SECONDS, row.session_id).run();
   }

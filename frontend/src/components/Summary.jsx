@@ -5,7 +5,7 @@ import { EmptyState, LoadingState, ScreenIntro, StatusNotice } from './States';
 
 export default function Summary({ currentUser }) {
   const { data, error, isLoading, isValidating, mutate } = useSWR(
-    '/api/orders/summary',
+    ['/api/orders/summary', currentUser.id, currentUser.group_id, currentUser.role],
     apiFetcher,
     { refreshInterval: 15000, revalidateOnFocus: true },
   );
@@ -16,8 +16,8 @@ export default function Summary({ currentUser }) {
     <section className="screen summary-screen">
       <ScreenIntro
         eyebrow={`${currentUser.group_id} 会計`}
-        title="グループの支払い額"
-        description="取消済みを除いた注文を、参加者ごとに集計しています。会計前に最新の金額を確認してください。"
+        title="グループの注文合計（目安）"
+        description="担当者が確認中の注文も含め、取消済みを除いて集計しています。店舗への最終支払額は、店員の伝票で確認してください。"
         action={(
           <button type="button" className="secondary-button compact-button" onClick={() => mutate()} disabled={isValidating}>
             {isValidating ? '更新中…' : '今すぐ更新'}
@@ -25,8 +25,8 @@ export default function Summary({ currentUser }) {
         )}
       />
 
-      <StatusNotice tone="warning" title="22時以降の深夜料金は合計に含まれません">
-        22時以降の注文には、店舗で10%が加算されます。最後の支払額は店員の伝票でも確認してください。
+      <StatusNotice tone="warning" title="席料・深夜料金などは自動計算しません">
+        公式案内にはテーブルチャージと22時以降の注文への深夜料金10%が掲載されています。今回は単品注文です。席料などの追加料金は、店舗の伝票で確認してください。
       </StatusNotice>
 
       {isLoading ? (
@@ -43,12 +43,12 @@ export default function Summary({ currentUser }) {
             <div className="summary-total-heading">
               <div>
                 <span>{currentUser.group_id}の合計</span>
-                <small>取消済みの注文は含みません</small>
+                <small>確認中を含む注文合計・追加料金は別途確認</small>
               </div>
               <strong>{formatYen(groupTotal)}</strong>
             </div>
             <dl>
-              <div><dt>支払い対象</dt><dd>{people.length}人</dd></div>
+              <div><dt>注文のある参加者</dt><dd>{people.length}人</dd></div>
               <div><dt>自動更新</dt><dd>15秒ごと</dd></div>
             </dl>
           </article>

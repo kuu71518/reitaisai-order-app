@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest, getErrorMessage, resolveApiUrl } from '../lib/api';
 import { formatDateTime, formatYen, orderTotal } from '../lib/format';
 import { createRequestId } from '../lib/requestId';
+import { assignableGroups } from '../lib/eventGroups';
 import { EmptyState, Field, LoadingState, ScreenIntro, StatusNotice } from './States';
 import BulkUserImport from './admin/BulkUserImport';
 import DataResetPanel from './admin/DataResetPanel';
@@ -24,7 +25,6 @@ const ROLE_OPTIONS = [
 const ASSIGNABLE_ROLE_OPTIONS = ROLE_OPTIONS.filter((option) => option.value !== 'admin');
 const BANQUET_CATEGORY = '宴会コース';
 
-const DEFAULT_GROUPS = ['Aグループ', 'あグループ'];
 const EMPTY_STATS = { total_users: 0, total_orders: 0, total_cancels: 0, total_sales: 0 };
 const EMPTY_MENU = { name: '', category: '', price: '', size: '' };
 const AUDIT_LABELS = {
@@ -174,15 +174,7 @@ export default function AdminDashboard() {
     }
   };
 
-  const existingGroups = useMemo(() => {
-    const groups = [...new Set(
-      users
-        .filter((user) => user.role !== 'admin')
-        .map((user) => user.group_id)
-        .filter(Boolean),
-    )];
-    return groups.length > 0 ? groups : DEFAULT_GROUPS;
-  }, [users]);
+  const existingGroups = useMemo(() => assignableGroups(users), [users]);
   const selectedNewUserGroup = existingGroups.includes(newUser.group_id)
     ? newUser.group_id
     : existingGroups[0] || '';

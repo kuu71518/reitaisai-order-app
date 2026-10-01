@@ -3,6 +3,7 @@ node_modules/
 dist/
 dist-ssr/
 coverage/
+output/playwright/
 .wrangler/
 
 # Local environment values

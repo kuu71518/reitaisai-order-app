@@ -192,6 +192,19 @@
   padding: 30px clamp(22px, 4vw, 48px) 72px;
 }
 
+.main-stage:focus { outline: none; }
+.main-stage > .venue-guide { max-width: 1040px; margin-inline: auto; }
+.nav-symbol svg, .mobile-nav-symbol svg { display: block; }
+
+.session-resume-error {
+  width: min(100% - 32px, 420px);
+  text-align: center;
+}
+
+.session-resume-error p {
+  margin: 0 0 16px;
+}
+
 .mobile-user-line,
 .mobile-nav {
   display: none;
@@ -355,6 +368,20 @@
   font-size: 0.86rem;
 }
 
+.login-details, .manager-help {
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+.login-details > summary, .manager-help > summary {
+  min-height: 48px;
+  padding-block: 12px;
+  color: var(--indigo);
+  font-weight: 700;
+  cursor: pointer;
+}
+.login-details p, .manager-help p { margin: 0 0 12px; }
+
 .discord-login-steps {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -455,16 +482,20 @@
   text-align: center;
 }
 
-@media (max-width: 767px) {
+@media (max-width: 1023px) {
   .app-shell {
     display: block;
     min-height: 100dvh;
   }
 
   .top-bar {
-    min-height: 64px;
-    padding: 7px 12px;
+    min-height: calc(64px + env(safe-area-inset-top, 0px));
+    gap: 8px;
+    padding: calc(7px + env(safe-area-inset-top, 0px)) max(12px, env(safe-area-inset-right, 0px)) 7px max(12px, env(safe-area-inset-left, 0px));
   }
+
+  .brand-lockup { gap: 9px; min-width: 0; }
+  .top-actions { gap: 6px; flex-shrink: 0; }
 
   .brand-stamp {
     width: 43px;
@@ -477,7 +508,8 @@
   }
 
   .brand-kicker {
-    font-size: 0.66rem;
+    font-size: 0.7rem;
+    letter-spacing: 0;
   }
 
   .desktop-only,
@@ -505,25 +537,29 @@
   .main-stage {
     min-height: calc(100dvh - 64px);
     overflow: visible;
-    padding: 12px 12px calc(92px + env(safe-area-inset-bottom));
+    padding: 14px max(16px, env(safe-area-inset-right, 0px)) calc(90px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
   }
 
   .mobile-user-line {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 14px;
-    border: 1px solid var(--line);
-    border-radius: 11px;
-    background: var(--surface);
-    padding: 9px 12px;
+    gap: 16px;
+    margin-bottom: 10px;
+    border-left: 4px solid var(--torii);
+    padding: 0 0 0 10px;
     color: var(--muted);
-    font-size: 0.82rem;
+    font-size: 0.875rem;
   }
+
+  .mobile-user-line > div { min-width: 0; display: grid; line-height: 1.45; }
+  .mobile-user-line > div > small { font-size: 0.75rem; }
+  .mobile-user-line > span { max-width: 40%; text-align: right; line-height: 1.4; }
+  .mobile-user-line > span > small { display: inline-block; margin-left: 3px; }
 
   .mobile-user-line strong {
     color: var(--indigo);
+    font-size: 1.06rem;
   }
 
   .mobile-nav {
@@ -535,11 +571,11 @@
     display: grid;
     grid-auto-flow: column;
     grid-auto-columns: 1fr;
-    min-height: calc(70px + env(safe-area-inset-bottom));
+    min-height: calc(70px + env(safe-area-inset-bottom, 0px));
     border-top: 1px solid var(--line-strong);
     background: rgba(255, 255, 255, 0.97);
     padding: 5px 6px calc(5px + env(safe-area-inset-bottom));
-    box-shadow: 0 -8px 26px rgba(38, 52, 85, 0.12);
+    box-shadow: 0 -3px 14px rgba(38, 52, 85, 0.08);
     backdrop-filter: blur(12px);
   }
 
@@ -555,14 +591,14 @@
     background: transparent;
     color: #596579;
     padding: 3px 2px;
-    font-size: 0.875rem;
+    font-size: 0.8rem;
     font-weight: 800;
     line-height: 1.2;
   }
 
   .mobile-nav-item.is-active {
-    background: var(--indigo-soft);
-    color: var(--indigo);
+    background: #fcecea;
+    color: var(--torii-dark);
   }
 
   .mobile-nav-symbol {
@@ -598,7 +634,7 @@
     align-items: flex-start;
     flex-direction: column;
     gap: 12px;
-    margin-bottom: 18px;
+    margin-bottom: 14px;
   }
 
   .screen-action {
@@ -632,4 +668,21 @@
   .discord-login-steps {
     grid-template-columns: 1fr;
   }
+}
+
+@media (max-width: 359px) {
+  .login-heading { gap: 12px; }
+  .login-stamp { width: 48px; height: 48px; border-width: 3px; }
+  .login-heading h1 { font-size: 1.5rem; }
+  .brand-stamp { width: 32px; height: 32px; border-width: 2px; }
+  .brand-lockup { gap: 6px; }
+  .brand-lockup strong { font-size: 0.94rem; }
+  .brand-kicker { font-size: 0.66rem; }
+  .logout-button { font-size: 0.75rem; padding-inline: 8px; }
+  .main-stage { padding-inline: 12px; }
+  .mobile-nav-item { font-size: 0.75rem; }
+}
+
+@media (max-height: 480px) and (max-width: 900px) {
+  .top-bar { position: relative; }
 }

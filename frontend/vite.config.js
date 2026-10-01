@@ -2,7 +2,10 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
-export default defineConfig({
+export default defineConfig(({ command, mode }) => {
+  const demo = mode === 'demo'
+  if (demo && command !== 'serve') throw new Error('Demo mode is local-only and cannot be built for publishing.')
+  return {
   plugins: [
     react(),
     VitePWA({
@@ -42,4 +45,4 @@ export default defineConfig({
       }
     })
   ]
-})
+}})

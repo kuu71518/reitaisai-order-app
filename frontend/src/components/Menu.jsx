@@ -4,6 +4,7 @@ import { apiFetcher, apiRequest, getErrorMessage } from '../lib/api';
 import { formatTime, formatYen, getOrderStatus, orderTotal } from '../lib/format';
 import { visibleMenuItemsForRole } from '../lib/menuVisibility';
 import { createRequestId } from '../lib/requestId';
+import { applyOrderSubmissionResults, changeCartQuantity } from '../lib/orderRetry';
 import { millisecondsUntilNextMinute, shouldShowLateNightNotice } from '../lib/time';
 import { EmptyState, LoadingState, ScreenIntro, StatusNotice } from './States';
 
@@ -20,8 +21,7 @@ const CATEGORY_PRIORITY = [
   '食事',
 ];
 
-export default function Menu({ currentUser }) {
-  const [view, setView] = useState('menu');
+export default function Menu({ currentUser, view, onViewChange, onSubmittingChange }) {
   const [cart, setCart] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('すべて');
@@ -32,13 +32,15 @@ export default function Menu({ currentUser }) {
   const [showLateNightNotice, setShowLateNightNotice] = useState(() => shouldShowLateNightNotice());
   const cartToastTimer = useRef(null);
   const cartToastSequence = useRef(0);
+  const submissionInFlight = useRef(false);
 
-  const menuQuery = useSWR('/api/menu', apiFetcher, {
+  const userScope = [currentUser.id, currentUser.group_id, currentUser.role];
+  const menuQuery = useSWR(['/api/menu', ...userScope], apiFetcher, {
     revalidateOnFocus: true,
     keepPreviousData: true,
   });
   const historyQuery = useSWR(
-    view === 'history' ? '/api/orders/mine' : null,
+    view === 'history' ? ['/api/orders/mine', ...userScope] : null,
     apiFetcher,
     { revalidateOnFocus: true, keepPreviousData: true },
   );
@@ -48,6 +50,7 @@ export default function Menu({ currentUser }) {
     [currentUser.role, menuQuery.data?.data],
   );
   const history = historyQuery.data?.data || EMPTY_ITEMS;
+  const unconfirmedCount = cart.filter((item) => item.needsConfirmation).length;
 
   useEffect(() => {
     let timer;
@@ -61,6 +64,16 @@ export default function Menu({ currentUser }) {
   }, []);
 
   useEffect(() => () => window.clearTimeout(cartToastTimer.current), []);
+
+  useEffect(() => {
+    if (cart.length === 0) return undefined;
+    const warnBeforeLeaving = (event) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warnBeforeLeaving);
+    return () => window.removeEventListener('beforeunload', warnBeforeLeaving);
+  }, [cart.length]);
 
   const categories = useMemo(() => {
     const available = [...new Set(menuItems.map((item) => item.category).filter(Boolean))];
@@ -124,7 +137,7 @@ export default function Menu({ currentUser }) {
   };
 
   const addToCart = (group) => {
-    if (isSubmitting) return;
+    if (submissionInFlight.current) return;
     const selectedId = Number(selectedVariations[group.key] ?? group.variations[0]?.id);
     const selectedItem = group.variations.find((variation) => Number(variation.id) === selectedId);
     if (!selectedItem) {
@@ -132,6 +145,10 @@ export default function Menu({ currentUser }) {
       return;
     }
     const existing = cart.find((item) => item.menu_item_id === selectedItem.id);
+    if (existing?.needsConfirmation) {
+      showFeedback('warning', '先に送信状況を確認してください', 'この商品は注文が届いている可能性があります。カートから同じ内容で再確認するか、注文履歴を確認してください。');
+      return;
+    }
     if (existing?.quantity >= 20) {
       showFeedback('warning', 'この商品の上限は20点です', '個数はカートの確認画面で変更できます。');
       return;
@@ -139,6 +156,7 @@ export default function Menu({ currentUser }) {
 
     setCart((current) => {
       const currentItem = current.find((item) => item.menu_item_id === selectedItem.id);
+      if (currentItem?.needsConfirmation) return current;
       if (currentItem) {
         return current.map((item) => (
           item.menu_item_id === selectedItem.id && item.quantity < 20
@@ -158,19 +176,24 @@ export default function Menu({ currentUser }) {
   };
 
   const changeQuantity = (id, delta) => {
-    if (isSubmitting) return;
-    setCart((current) => current.flatMap((item) => {
-      if (item.menu_item_id !== id) return [item];
-      const quantity = item.quantity + delta;
-      if (quantity <= 0) return [];
-      return [{ ...item, quantity: Math.min(quantity, 20) }];
-    }));
+    if (submissionInFlight.current) return;
+    setCart((current) => changeCartQuantity(current, id, delta));
+  };
+
+  const dismissConfirmedItem = (item) => {
+    if (submissionInFlight.current || !item.needsConfirmation) return;
+    const confirmed = window.confirm(`${item.name}（${item.size}）${item.quantity}点について、注文履歴または担当者への確認が済み、再送不要であることを確認しましたか？\nカートから外しても、送信済みの注文は取り消されません。結果が不明な場合は「キャンセル」を押してください。`);
+    if (!confirmed) return;
+    setCart((current) => current.filter((entry) => entry.request_id !== item.request_id));
+    showFeedback('success', '確認済みの商品をカートから外しました', '送信済みの注文はそのまま残ります。注文内容は履歴で確認できます。');
   };
 
   const submitOrder = async () => {
-    if (cart.length === 0 || isSubmitting) return;
+    if (cart.length === 0 || submissionInFlight.current) return;
+    submissionInFlight.current = true;
     const submittedItems = [...cart];
     setIsSubmitting(true);
+    onSubmittingChange(true);
     setFeedback(null);
 
     const results = await Promise.allSettled(submittedItems.map((item) => apiRequest('/api/orders', {
@@ -189,12 +212,14 @@ export default function Menu({ currentUser }) {
       else failed.push(result.reason);
     });
 
-    setCart((current) => current.filter((item) => !successfulIds.has(item.menu_item_id)));
+    setCart((current) => applyOrderSubmissionResults(current, submittedItems, results));
+    submissionInFlight.current = false;
     setIsSubmitting(false);
+    onSubmittingChange(false);
 
     if (failed.length === 0) {
       showFeedback('success', '注文を送信しました', '担当者が内容を確認します。注文履歴で状態を確認できます。');
-      setView('history');
+      onViewChange('history');
       await historyQuery.mutate();
       return;
     }
@@ -202,18 +227,18 @@ export default function Menu({ currentUser }) {
     const successCount = successfulIds.size;
     showFeedback(
       successCount > 0 ? 'warning' : 'danger',
-      successCount > 0 ? `${successCount}件は送信、${failed.length}件は未送信です` : '注文を送信できませんでした',
-      `${getErrorMessage(failed[0], '通信状態を確認してください。')} 重複を防ぐため、注文履歴を確認してから残った商品を再送してください。`,
+      successCount > 0 ? `${successCount}件の受付を確認、${failed.length}件は確認できませんでした` : '注文の受付を確認できませんでした',
+      `${getErrorMessage(failed[0], '通信状態を確認してください。')} 注文が届いている可能性があります。結果不明の商品は内容を変えずに再確認できます。`,
     );
     if (successCount > 0) await historyQuery.mutate();
   };
 
   const switchView = (nextView) => {
-    if (isSubmitting) return;
+    if (submissionInFlight.current) return;
     setFeedback(null);
     setCartToast(null);
     window.clearTimeout(cartToastTimer.current);
-    setView(nextView);
+    onViewChange(nextView);
   };
 
   const renderOrderSteps = () => (
@@ -249,34 +274,21 @@ export default function Menu({ currentUser }) {
   }
 
   return (
-    <section className={`screen menu-screen${view === 'menu' ? ' has-cart-dock' : ''}`}>
-      <nav className="view-switch" aria-label="注文画面の切り替え">
-        <button
-          type="button"
-          aria-pressed={view !== 'history'}
-          className={view !== 'history' ? 'is-active' : ''}
-          onClick={() => switchView(cart.length > 0 && view === 'review' ? 'review' : 'menu')}
-          disabled={isSubmitting}
-        >
-          注文する
-          {cartSummary.units > 0 && <span>{cartSummary.units}</span>}
-        </button>
-        <button
-          type="button"
-          aria-pressed={view === 'history'}
-          className={view === 'history' ? 'is-active' : ''}
-          onClick={() => switchView('history')}
-          disabled={isSubmitting}
-        >
-          注文履歴
-        </button>
-      </nav>
-
-      {view !== 'history' && renderOrderSteps()}
+    <section className={`screen menu-screen${cart.length > 0 ? ' has-cart-dock' : ''}`}>
 
       {showLateNightNotice && (
-        <StatusNotice tone="warning" title="22時以降は店で10%加算されます">
-          アプリの表示価格と合計は通常時間の金額です。22時以降の注文は、会計時に店舗の深夜料金10%が加算されます。
+        <StatusNotice tone="warning" title="深夜料金は予約条件と店舗の伝票で確認してください">
+          公式案内では22時以降の注文に10%の深夜料金があります。アプリでは追加料金を自動計算しません。予約条件と店舗の伝票で確認してください。
+        </StatusNotice>
+      )}
+
+      {unconfirmedCount > 0 && (
+        <StatusNotice tone="warning" title={`${unconfirmedCount}件の送信状況が不明です`} action={(
+          <button type="button" className="small-button" onClick={() => switchView(view === 'history' ? 'review' : 'history')} disabled={isSubmitting}>
+            {view === 'history' ? 'カートで再確認する' : '注文履歴を確認する'}
+          </button>
+        )}>
+          重複を防ぐため、結果が分かるまで数量変更・削除はできません。カートから同じ内容で再確認するか、履歴・担当者に確認してください。
         </StatusNotice>
       )}
 
@@ -301,25 +313,28 @@ export default function Menu({ currentUser }) {
       {view === 'menu' && (
         <>
           <ScreenIntro
-            eyebrow="手順 1"
             title="料理・飲み物を選ぶ"
-            description="商品を選び、「カートに入れる」を押してください。送信はまだされません。"
+            description="好きなものをカートに。最後に確認して送信します。"
           />
+          {renderOrderSteps()}
 
           <div className="catalog-tools">
-            <label className="search-field">
-              <span>メニューを検索</span>
+            <div className="search-field">
+              <label className="sr-only" htmlFor="menu-search">メニューを検索</label>
               <div>
                 <span aria-hidden="true">⌕</span>
                 <input
+                  id="menu-search"
                   type="search"
                   value={searchQuery}
                   onChange={(event) => setSearchQuery(event.target.value)}
                   placeholder="例：ビール、唐揚げ"
+                  autoComplete="off"
+                  enterKeyHint="search"
                 />
-                {searchQuery && <button type="button" onClick={() => setSearchQuery('')}>消す</button>}
+                {searchQuery && <button type="button" onClick={() => setSearchQuery('')} aria-label="検索語を消す">消す</button>}
               </div>
-            </label>
+            </div>
 
             <div className="category-strip" aria-label="カテゴリーで絞り込む">
               {categories.map((category) => (
@@ -333,6 +348,15 @@ export default function Menu({ currentUser }) {
                   {category}
                 </button>
               ))}
+            </div>
+            <div className="catalog-filter-row">
+              <label className="mobile-category-select">
+                <span>種類</span>
+                <select value={selectedCategory} onChange={(event) => setSelectedCategory(event.target.value)}>
+                  {categories.map((category) => <option key={category} value={category}>{category}</option>)}
+                </select>
+              </label>
+              <span className="catalog-result-count" role="status" aria-live="polite">{groupedItems.length}品</span>
             </div>
           </div>
 
@@ -348,10 +372,13 @@ export default function Menu({ currentUser }) {
             {groupedItems.map((group) => {
               const selectedId = Number(selectedVariations[group.key] ?? group.variations[0]?.id);
               const selectedItem = group.variations.find((item) => Number(item.id) === selectedId) || group.variations[0];
+              const cartItem = cart.find((item) => item.menu_item_id === selectedItem?.id);
               return (
                 <article key={group.key} className="menu-card">
                   <div className="menu-card-copy">
-                    <span className="category-label">{group.category}</span>
+                    <div className="menu-card-meta"><span className="category-label">{group.category}</span>
+                      {cartItem && <span className="in-cart-label">{cartItem.needsConfirmation ? '受付の確認が必要' : `カートに${cartItem.quantity}点`}</span>}
+                    </div>
                     <h2>{group.name}</h2>
                   </div>
                   <div className="menu-card-controls">
@@ -359,6 +386,7 @@ export default function Menu({ currentUser }) {
                       <label>
                         <span>サイズ・価格</span>
                         <select
+                          aria-label={`${group.name}のサイズ・価格`}
                           value={selectedId}
                           onChange={(event) => setSelectedVariations((current) => ({
                             ...current,
@@ -378,8 +406,10 @@ export default function Menu({ currentUser }) {
                         <strong>{formatYen(selectedItem?.price)}</strong>
                       </div>
                     )}
-                    <button type="button" className="add-cart-button" onClick={() => addToCart(group)}>
-                      <span aria-hidden="true">＋</span> カートに入れる
+                    <button type="button" className="add-cart-button" onClick={() => addToCart(group)}
+                      aria-label={`${group.name}（${selectedItem?.size || '通常'}）をカートに追加`}
+                      disabled={isSubmitting || Boolean(cartItem?.needsConfirmation) || cartItem?.quantity >= 20}>
+                      <span aria-hidden="true">＋</span> {cartItem?.needsConfirmation ? '要確認' : cartItem?.quantity >= 20 ? '上限20点' : '追加する'}
                     </button>
                   </div>
                 </article>
@@ -396,26 +426,17 @@ export default function Menu({ currentUser }) {
             />
           )}
 
-          <div className="cart-dock" role="region" aria-label="カート">
-            <div>
-              <span>{cartSummary.units > 0 ? `${cartSummary.units}点を選択中` : 'カートは空です'}</span>
-              <strong>{cartSummary.units > 0 ? formatYen(cartSummary.total) : '商品を選んでください'}</strong>
-            </div>
-            <button type="button" onClick={() => switchView('review')} disabled={cartSummary.units === 0}>
-              {cartSummary.units > 0 ? 'カートを見る' : 'まだ選ばれていません'}
-            </button>
-          </div>
         </>
       )}
 
       {view === 'review' && (
         <>
           <ScreenIntro
-            eyebrow="手順 2"
             title="注文内容を確認"
-            description="商品・サイズ・個数を確認してください。赤いボタンを押すまで送信されません。"
+            description="商品と個数を確認して、席の担当者へ送ります。"
             action={<button type="button" className="secondary-button compact-button" onClick={() => switchView('menu')} disabled={isSubmitting}>メニューへ戻る</button>}
           />
+          {renderOrderSteps()}
 
           <div className="order-ticket">
             <div className="ticket-heading">
@@ -435,15 +456,16 @@ export default function Menu({ currentUser }) {
                   <div className="cart-item-copy">
                     <strong>{item.name}</strong>
                     <span>{item.size}・1点 {formatYen(item.price)}</span>
+                    {item.needsConfirmation && <small>送信結果が不明です。同じ内容で再確認できます。</small>}
                   </div>
                   <div className="quantity-control" aria-label={`${item.name}の個数`}>
-                    <button type="button" onClick={() => changeQuantity(item.menu_item_id, -1)} aria-label={`${item.name}を1つ減らす`} disabled={isSubmitting}>−</button>
+                    <button type="button" onClick={() => changeQuantity(item.menu_item_id, -1)} aria-label={`${item.name}を1つ減らす`} disabled={isSubmitting || item.needsConfirmation}>−</button>
                     <output aria-live="polite">{item.quantity}</output>
-                    <button type="button" onClick={() => changeQuantity(item.menu_item_id, 1)} aria-label={`${item.name}を1つ増やす`} disabled={isSubmitting}>＋</button>
+                    <button type="button" onClick={() => changeQuantity(item.menu_item_id, 1)} aria-label={`${item.name}を1つ増やす`} disabled={isSubmitting || item.needsConfirmation || item.quantity >= 20}>＋</button>
                   </div>
                   <strong className="cart-line-total">{formatYen(Number(item.price || 0) * item.quantity)}</strong>
-                  <button type="button" className="text-button danger-text" onClick={() => changeQuantity(item.menu_item_id, -item.quantity)} disabled={isSubmitting}>
-                    削除
+                  <button type="button" className="text-button danger-text" onClick={() => item.needsConfirmation ? dismissConfirmedItem(item) : changeQuantity(item.menu_item_id, -item.quantity)} disabled={isSubmitting}>
+                    {item.needsConfirmation ? '確認済みなので外す' : 'カートから外す'}
                   </button>
                 </li>
               ))}
@@ -464,9 +486,9 @@ export default function Menu({ currentUser }) {
             />
           ) : (
             <div className="submit-panel">
-              <span>押すと担当者へ注文が送られます</span>
+              <span>{unconfirmedCount > 0 ? '内容を変えずに、受付を再確認します' : `${cartSummary.units}点・${formatYen(cartSummary.total)}を席の担当者へ`}</span>
               <button type="button" className="primary-button" onClick={submitOrder} disabled={isSubmitting} aria-busy={isSubmitting}>
-                {isSubmitting ? '注文を送信しています…' : `この${cartSummary.units}点を注文する`}
+                {isSubmitting ? '注文を確認しています…' : unconfirmedCount > 0 ? '送信と受付の再確認をする' : `この${cartSummary.units}点を注文する`}
               </button>
             </div>
           )}
@@ -476,9 +498,8 @@ export default function Menu({ currentUser }) {
       {view === 'history' && (
         <>
           <ScreenIntro
-            eyebrow="注文後の確認"
             title="自分の注文履歴"
-            description="「確認中」は担当者が店員へ伝える前、「注文済み」は伝達済みです。"
+            description="「確認中」は担当者へ届いた注文。「注文済み」は店員へ伝達済みです。"
             action={<button type="button" className="secondary-button compact-button" onClick={() => historyQuery.mutate()} disabled={historyQuery.isValidating}>更新する</button>}
           />
 
@@ -500,11 +521,11 @@ export default function Menu({ currentUser }) {
               )}
               <div className="history-totals">
                 <div className="confirmed-total">
-                  <span>注文済みの確定額</span>
+                  <span>注文済みの合計</span>
                   <strong>{formatYen(historyTotals.confirmed)}</strong>
                 </div>
                 <div>
-                  <span>担当者が確認中の予定額</span>
+                  <span>担当者が確認中</span>
                   <strong>{formatYen(historyTotals.pending)}</strong>
                 </div>
               </div>
@@ -542,6 +563,12 @@ export default function Menu({ currentUser }) {
             </>
           )}
         </>
+      )}
+      {view !== 'review' && cart.length > 0 && (
+        <div className="cart-dock" role="region" aria-label="カート">
+          <div><span>{cartSummary.units}点を選択中</span><strong>{formatYen(cartSummary.total)}</strong></div>
+          <button type="button" onClick={() => switchView('review')}>カートを確認<span aria-hidden="true"> ›</span></button>
+        </div>
       )}
     </section>
   );

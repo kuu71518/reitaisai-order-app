@@ -457,6 +457,37 @@
   border-top: 6px solid var(--gold);
 }
 
+.admin-bulk-mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.admin-excel-source {
+  display: grid;
+  min-width: 0;
+  gap: 16px;
+}
+
+.admin-excel-source .admin-bulk-guide {
+  margin-bottom: 0;
+}
+
+.admin-excel-template {
+  justify-self: start;
+  padding: 10px 0;
+  font-weight: 700;
+  color: var(--indigo);
+  text-underline-offset: 3px;
+}
+
+.admin-excel-file {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
 .admin-bulk-guide {
   display: grid;
   gap: 4px;

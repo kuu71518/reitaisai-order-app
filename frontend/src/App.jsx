@@ -5,6 +5,9 @@ import Menu from './components/Menu';
 import ManagerDashboard from './components/ManagerDashboard';
 import Summary from './components/Summary';
 import AdminDashboard from './components/AdminDashboard';
+import VenueGuide from './components/VenueGuide';
+import NavIcon from './components/NavIcon';
+import ConfirmDialog from './components/ConfirmDialog';
 import { LoadingState, StatusNotice } from './components/States';
 import { useManagerOrders } from './hooks/useManagerOrders';
 import { ApiError, apiRequest, clearSessionToken, loadSession } from './lib/api';
@@ -14,8 +17,7 @@ const ACTIVE_TAB_KEY = 'reitaisai_active_tab';
 const HIDDEN_AT_KEY = 'reitaisai_hidden_at';
 const LAST_ACTIVE_KEY = 'reitaisai_last_active';
 const LEGACY_NOTIFICATION_KEY = 'reitaisai_notifs';
-const INACTIVITY_LIMIT = 5 * 60 * 60 * 1000;
-const BACKGROUND_LIMIT = 3 * 60 * 60 * 1000;
+const SESSION_CHECK_TIMEOUT = 15_000;
 
 const SESSION_STORAGE_KEYS = [
   LEGACY_USER_KEY,
@@ -25,7 +27,10 @@ const SESSION_STORAGE_KEYS = [
   LEGACY_NOTIFICATION_KEY,
 ];
 
-const BASE_NAV_ITEMS = [{ id: 'menu', icon: '🍽', label: '注文する' }];
+const BASE_NAV_ITEMS = [
+  { id: 'menu', label: 'メニュー' },
+  { id: 'history', label: '注文履歴' },
+];
 
 function readSessionItem(key) {
   try {
@@ -63,11 +68,6 @@ function removeLegacyLocalStorage() {
   }
 }
 
-function readSessionNumber(key) {
-  const value = Number(readSessionItem(key));
-  return Number.isFinite(value) ? value : 0;
-}
-
 function compactUser(user) {
   const allowedRoles = new Set(['member', 'manager', 'admin']);
   if (!user || !user.id || !user.name || !user.group_id || !allowedRoles.has(user.role)) return null;
@@ -84,12 +84,12 @@ function getNavItems(user) {
   if (user.role === 'manager') {
     return [
       ...BASE_NAV_ITEMS,
-      { id: 'manager', icon: '📋', label: '注文をまとめる' },
-      { id: 'summary', icon: '¥', label: '会計を見る' },
+      { id: 'manager', label: '取りまとめ' },
+      { id: 'summary', label: '会計' },
     ];
   }
   if (user.role === 'admin') {
-    return [...BASE_NAV_ITEMS, { id: 'admin', icon: '⚙', label: '管理する' }];
+    return [...BASE_NAV_ITEMS, { id: 'admin', label: '管理' }];
   }
   return BASE_NAV_ITEMS;
 }
@@ -98,7 +98,15 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [authState, setAuthState] = useState('loading');
   const [sessionError, setSessionError] = useState('');
+  const [sessionAttempt, setSessionAttempt] = useState(0);
+  const [resumeError, setResumeError] = useState('');
+  const [isResuming, setIsResuming] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [showLogout, setShowLogout] = useState(false);
+  const [logoutError, setLogoutError] = useState('');
+  const [orderView, setOrderView] = useState('menu');
+  const [orderBusy, setOrderBusy] = useState(false);
+  const mainRef = useRef(null);
   const [activeTab, setActiveTab] = useState(() => {
     const storedTab = readSessionItem(ACTIVE_TAB_KEY);
     return storedTab || 'menu';
@@ -110,6 +118,9 @@ export default function App() {
   const notifiedOrderIds = useRef(new Set());
   const orderBaselineReady = useRef(false);
   const toastTimer = useRef(null);
+  const resumeController = useRef(null);
+  const sessionGeneration = useRef(0);
+  const currentUserRef = useRef(null);
   const { mutate: mutateAll } = useSWRConfig();
 
   const showOrderToast = useCallback((count) => {
@@ -145,14 +156,24 @@ export default function App() {
   const managerOrders = useManagerOrders(currentUser, handleManagerOrders);
 
   const clearClientSession = useCallback((notice = '') => {
+    sessionGeneration.current += 1;
+    resumeController.current?.abort();
+    resumeController.current = null;
     removeSessionKeys();
     removeLegacyLocalStorage();
     clearSessionToken();
+    currentUserRef.current = null;
     setCurrentUser(null);
     setActiveTab('menu');
+    setOrderView('menu');
+    setOrderBusy(false);
+    setShowLogout(false);
+    setLogoutError('');
     setLatestToast(null);
     setUnreadCount(0);
     setPrivacyCovered(false);
+    setResumeError('');
+    setIsResuming(false);
     setLoginNotice(notice);
     notifiedOrderIds.current.clear();
     orderBaselineReady.current = false;
@@ -161,8 +182,9 @@ export default function App() {
   }, [mutateAll]);
 
   const handleLogout = useCallback(async () => {
-    if (isLoggingOut || !window.confirm('この端末からログアウトしますか？')) return;
+    if (isLoggingOut) return;
     setIsLoggingOut(true);
+    setLogoutError('');
     try {
       await apiRequest('/api/auth/logout', { method: 'POST' });
       clearClientSession('ログアウトしました。');
@@ -170,7 +192,7 @@ export default function App() {
       if (error instanceof ApiError && error.status === 401) {
         clearClientSession('ログインの有効期限が切れました。');
       } else {
-        window.alert('ログアウト処理を完了できませんでした。通信状態を確認して、もう一度お試しください。');
+        setLogoutError('ログアウトできませんでした。通信状態を確認して、もう一度お試しください。');
       }
     } finally {
       setIsLoggingOut(false);
@@ -181,13 +203,17 @@ export default function App() {
     removeLegacyLocalStorage();
     removeSessionItem(LEGACY_USER_KEY);
     let cancelled = false;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), SESSION_CHECK_TIMEOUT);
 
-    void loadSession()
+    void loadSession({ signal: controller.signal })
       .then((user) => {
         if (cancelled) return;
         const safeUser = compactUser(user);
         if (!safeUser) throw new Error('Invalid session user');
+        currentUserRef.current = safeUser;
         setCurrentUser(safeUser);
+        setPrivacyCovered(document.visibilityState === 'hidden');
         setSessionError('');
         setLoginNotice('');
         const url = new URL(window.location.href);
@@ -204,13 +230,16 @@ export default function App() {
         }
       })
       .finally(() => {
+        window.clearTimeout(timeout);
         if (!cancelled) setAuthState('ready');
       });
 
     return () => {
       cancelled = true;
+      controller.abort();
+      window.clearTimeout(timeout);
     };
-  }, []);
+  }, [sessionAttempt]);
 
   useEffect(() => {
     const handleExpired = () => clearClientSession('ログインの有効期限が切れました。もう一度ログインしてください。');
@@ -222,88 +251,80 @@ export default function App() {
     if (currentUser) writeSessionItem(ACTIVE_TAB_KEY, activeTab);
   }, [activeTab, currentUser]);
 
+  const resumeSession = useCallback(async () => {
+    if (resumeController.current) return;
+    const controller = new AbortController();
+    const generation = sessionGeneration.current;
+    resumeController.current = controller;
+    setPrivacyCovered(true);
+    setIsResuming(true);
+    setResumeError('');
+    const timeout = window.setTimeout(() => controller.abort(), SESSION_CHECK_TIMEOUT);
+    try {
+      const user = await loadSession({ signal: controller.signal });
+      if (generation !== sessionGeneration.current) return;
+      const safeUser = compactUser(user);
+      if (!safeUser) throw new Error('Invalid session user');
+      const previousUser = currentUserRef.current;
+      if (previousUser && (previousUser.id !== safeUser.id
+        || previousUser.group_id !== safeUser.group_id || previousUser.role !== safeUser.role)) {
+        await mutateAll(() => true, undefined, { revalidate: false });
+        if (generation !== sessionGeneration.current) return;
+        notifiedOrderIds.current.clear();
+        orderBaselineReady.current = false;
+        window.clearTimeout(toastTimer.current);
+        setLatestToast(null);
+        setUnreadCount(0);
+        setActiveTab('menu');
+        setOrderView('menu');
+        setOrderBusy(false);
+      }
+      currentUserRef.current = safeUser;
+      setCurrentUser(safeUser);
+      setPrivacyCovered(document.visibilityState === 'hidden');
+    } catch (error) {
+      if (generation !== sessionGeneration.current) return;
+      if (error instanceof ApiError && error.status === 401) {
+        clearClientSession('ログインの有効期限が切れたか、利用登録が変更されました。もう一度ログインしてください。');
+      } else {
+        setResumeError('ログイン状態を確認できませんでした。通信状態を確認して、もう一度お試しください。');
+      }
+    } finally {
+      window.clearTimeout(timeout);
+      if (resumeController.current === controller) {
+        resumeController.current = null;
+        setIsResuming(false);
+      }
+    }
+  }, [clearClientSession, mutateAll]);
+
+  const sessionUserId = currentUser?.id;
   useEffect(() => {
-    if (!currentUser) return undefined;
-
-    let lastActivityWrite = 0;
-    let logoutInFlight = false;
-    let logoutRetryTimer = null;
-    const updateActivity = () => {
-      const now = Date.now();
-      if (now - lastActivityWrite < 60_000) return;
-      lastActivityWrite = now;
-      writeSessionItem(LAST_ACTIVE_KEY, String(now));
-    };
-
-    const forceLogout = async () => {
-      if (logoutInFlight) return;
-      logoutInFlight = true;
-      setPrivacyCovered(true);
-
-      try {
-        await apiRequest('/api/auth/logout', { method: 'POST' });
-        clearClientSession('長時間操作がなかったため、安全のためログアウトしました。');
-      } catch (error) {
-        if (error instanceof ApiError && error.status === 401) {
-          clearClientSession('ログインの有効期限が切れました。');
-          return;
-        }
-
-        logoutRetryTimer = window.setTimeout(() => {
-          logoutInFlight = false;
-          void forceLogout();
-        }, 10_000);
-        return;
-      }
-
-      logoutInFlight = false;
-    };
-
+    if (!sessionUserId) return undefined;
     const handleVisibilityChange = () => {
-      const now = Date.now();
-      if (document.visibilityState === 'hidden') {
-        setPrivacyCovered(true);
-        writeSessionItem(HIDDEN_AT_KEY, String(now));
-        return;
-      }
-
-      const hiddenAt = readSessionNumber(HIDDEN_AT_KEY);
-      const lastActive = readSessionNumber(LAST_ACTIVE_KEY);
-      if (
-        (hiddenAt > 0 && now - hiddenAt > BACKGROUND_LIMIT)
-        || (lastActive > 0 && now - lastActive > INACTIVITY_LIMIT)
-      ) {
-        void forceLogout();
-        return;
-      }
-
-      removeSessionItem(HIDDEN_AT_KEY);
-      setPrivacyCovered(false);
-      updateActivity();
+      if (document.visibilityState === 'hidden') setPrivacyCovered(true);
+      else void resumeSession();
     };
-
-    updateActivity();
-    window.addEventListener('touchstart', updateActivity, { passive: true });
-    window.addEventListener('pointerdown', updateActivity, { passive: true });
-    window.addEventListener('keydown', updateActivity);
-    window.addEventListener('scroll', updateActivity, { passive: true });
+    const handleOnline = () => {
+      if (document.visibilityState !== 'hidden') void resumeSession();
+    };
     document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    const interval = window.setInterval(() => {
-      const lastActive = readSessionNumber(LAST_ACTIVE_KEY);
-      if (lastActive > 0 && Date.now() - lastActive > INACTIVITY_LIMIT) void forceLogout();
-    }, 60_000);
-
+    window.addEventListener('online', handleOnline);
     return () => {
-      window.removeEventListener('touchstart', updateActivity);
-      window.removeEventListener('pointerdown', updateActivity);
-      window.removeEventListener('keydown', updateActivity);
-      window.removeEventListener('scroll', updateActivity);
+      sessionGeneration.current += 1;
+      resumeController.current?.abort();
+      resumeController.current = null;
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.clearInterval(interval);
-      window.clearTimeout(logoutRetryTimer);
+      window.removeEventListener('online', handleOnline);
     };
-  }, [clearClientSession, currentUser]);
+  }, [resumeSession, sessionUserId]);
+
+  useEffect(() => {
+    if (!mainRef.current) return;
+    mainRef.current.focus({ preventScroll: true });
+    mainRef.current.scrollTop = 0;
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }, [activeTab, orderView]);
 
   if (authState === 'loading') {
     return (
@@ -315,20 +336,39 @@ export default function App() {
     );
   }
 
-  if (!currentUser) return <Login notice={loginNotice} sessionError={sessionError} />;
+  if (!currentUser) return <Login notice={loginNotice} sessionError={sessionError} onRetrySession={() => {
+    setSessionError('');
+    setAuthState('loading');
+    setSessionAttempt((attempt) => attempt + 1);
+  }} />;
 
   const navItems = getNavItems(currentUser);
+  const userContextKey = `${currentUser.id}:${currentUser.group_id}:${currentUser.role}`;
   const safeActiveTab = navItems.some((item) => item.id === activeTab) ? activeTab : 'menu';
   const handleNavigate = (tab) => {
+    if (orderBusy) return;
+    if (tab === 'menu') setOrderView('menu');
     setActiveTab(tab);
     setLatestToast(null);
     if (tab === 'manager') setUnreadCount(0);
   };
+  const handleOrderView = (nextView) => {
+    const user = currentUserRef.current;
+    if (!user || `${user.id}:${user.group_id}:${user.role}` !== userContextKey) return;
+    setOrderView(nextView === 'review' ? 'review' : 'menu');
+    setActiveTab(nextView === 'history' ? 'history' : 'menu');
+  };
+  const handleOrderSubmitting = (submitting) => {
+    const user = currentUserRef.current;
+    if (!user || `${user.id}:${user.group_id}:${user.role}` !== userContextKey) return;
+    setOrderBusy(submitting);
+  };
 
-  let screen = <Menu currentUser={currentUser} />;
+  let screen = null;
   if (safeActiveTab === 'manager') {
     screen = (
       <ManagerDashboard
+        key={userContextKey}
         currentUser={currentUser}
         orders={managerOrders.orders}
         ordersError={managerOrders.error}
@@ -339,9 +379,9 @@ export default function App() {
       />
     );
   } else if (safeActiveTab === 'summary') {
-    screen = <Summary currentUser={currentUser} />;
+    screen = <Summary key={userContextKey} currentUser={currentUser} />;
   } else if (safeActiveTab === 'admin') {
-    screen = <AdminDashboard />;
+    screen = <AdminDashboard key={userContextKey} />;
   }
 
   return (
@@ -372,7 +412,7 @@ export default function App() {
               {unreadCount > 0 && <span className="count-badge">{unreadCount}</span>}
             </button>
           )}
-          <button type="button" className="logout-button" onClick={handleLogout} disabled={isLoggingOut}>
+          <button type="button" className="logout-button" onClick={() => setShowLogout(true)} disabled={isLoggingOut || orderBusy}>
             {isLoggingOut ? '処理中…' : 'ログアウト'}
           </button>
         </div>
@@ -391,30 +431,37 @@ export default function App() {
               type="button"
               className={safeActiveTab === item.id ? 'nav-item is-active' : 'nav-item'}
               onClick={() => handleNavigate(item.id)}
+              disabled={orderBusy}
               aria-current={safeActiveTab === item.id ? 'page' : undefined}
             >
-              <span className="nav-symbol" aria-hidden="true">{item.icon}</span>
+              <span className="nav-symbol"><NavIcon name={item.id} /></span>
               <span>{item.label}</span>
             </button>
           ))}
         </nav>
-        <p className="side-note">操作に迷ったら、画面の赤いボタンを順番に押してください。</p>
+        <p className="side-note">注文は席の担当者へ届きます。担当者がまとめて店員へ伝えます。</p>
       </aside>
 
-      <main className="main-stage" id="main-content">
+      <main className="main-stage" id="main-content" ref={mainRef} tabIndex={-1}>
         <div className="mobile-user-line">
-          <span>{currentUser.name}</span>
-          <strong>{currentUser.group_id}</strong>
+          <div><small>あなたの席</small><strong>{currentUser.group_id}</strong></div>
+          <span>{currentUser.name}<small>さん</small></span>
         </div>
-        {currentUser.role === 'manager' && safeActiveTab !== 'manager' && (
+        <VenueGuide compact />
+        {currentUser.role === 'manager' && unreadCount > 0 && safeActiveTab !== 'manager' && (
           <StatusNotice
             tone="warning"
-            title="新着注文は担当者画面でも確認できます"
+            title={`${unreadCount}件の新しい注文があります`}
             action={<button type="button" className="small-button" onClick={() => handleNavigate('manager')}>担当者画面を開く</button>}
           >
-            通知を使わなくても注文機能は利用できます。
+            「取りまとめ」で内容を確認してください。
           </StatusNotice>
         )}
+        <div hidden={!['menu', 'history'].includes(safeActiveTab)}>
+          <Menu key={userContextKey} currentUser={currentUser}
+            view={safeActiveTab === 'history' ? 'history' : orderView}
+            onViewChange={handleOrderView} onSubmittingChange={handleOrderSubmitting} />
+        </div>
         {screen}
       </main>
 
@@ -425,9 +472,10 @@ export default function App() {
             type="button"
             className={safeActiveTab === item.id ? 'mobile-nav-item is-active' : 'mobile-nav-item'}
             onClick={() => handleNavigate(item.id)}
+            disabled={orderBusy}
             aria-current={safeActiveTab === item.id ? 'page' : undefined}
           >
-            <span className="mobile-nav-symbol" aria-hidden="true">{item.icon}</span>
+            <span className="mobile-nav-symbol"><NavIcon name={item.id} /></span>
             <span>{item.label}</span>
             {item.id === 'manager' && unreadCount > 0 && <span className="mobile-nav-badge">{unreadCount}</span>}
           </button>
@@ -446,10 +494,20 @@ export default function App() {
       )}
       </div>
 
+      <ConfirmDialog open={showLogout} title="この端末からログアウトしますか？"
+        confirmLabel="ログアウトする" busy={isLoggingOut} onConfirm={handleLogout} onCancel={() => { setShowLogout(false); setLogoutError(''); }}>
+        <p>次に使うときはDiscordでログインし直します。共用端末で使い終わったときに選んでください。</p>
+        {logoutError && <StatusNotice tone="danger" title={logoutError} />}
+      </ConfirmDialog>
+
       {privacyCovered && (
         <div className="privacy-cover" role="status" aria-live="polite">
           <img src="/icon-192.png" alt="" />
-          <strong>内容を隠しています</strong>
+          <strong>{isResuming ? 'ログイン状態を確認しています' : resumeError ? '通信の確認が必要です' : '内容を隠しています'}</strong>
+          {resumeError && <div className="session-resume-error">
+            <p>{resumeError}</p>
+            <button type="button" className="primary-button compact-button" onClick={() => void resumeSession()} disabled={isResuming}>もう一度確認する</button>
+          </div>}
         </div>
       )}
     </>

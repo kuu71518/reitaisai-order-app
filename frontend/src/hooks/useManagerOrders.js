@@ -4,8 +4,9 @@ import { apiFetcher } from '../lib/api';
 
 export function useManagerOrders(currentUser, onOrders) {
   const isManager = currentUser?.role === 'manager';
+  const userScope = isManager ? JSON.stringify([currentUser.id, currentUser.group_id, currentUser.role]) : null;
   const key = isManager
-    ? '/api/manager/orders?status=pending'
+    ? ['/api/manager/orders?status=pending', userScope]
     : null;
   const [lastUpdate, setLastUpdate] = useState({ key: null, value: null });
 
@@ -16,7 +17,7 @@ export function useManagerOrders(currentUser, onOrders) {
     refreshWhenOffline: false,
     revalidateOnFocus: true,
     onSuccess: (payload) => {
-      setLastUpdate({ key, value: new Date() });
+      setLastUpdate({ key: userScope, value: new Date() });
       onOrders?.(payload?.data || []);
     },
   });
@@ -26,7 +27,7 @@ export function useManagerOrders(currentUser, onOrders) {
     error,
     isLoading,
     isRefreshing: isValidating && !isLoading,
-    lastUpdated: lastUpdate?.key === key ? lastUpdate.value : null,
+    lastUpdated: lastUpdate?.key === userScope ? lastUpdate.value : null,
     refresh: mutate,
   };
 }

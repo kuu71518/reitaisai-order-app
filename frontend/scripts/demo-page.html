@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>打ち上げアプリ｜ローカルテスト</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; height: 100dvh; display: flex; flex-direction: column; color: #24304e; background: #eef2f7; font: 14px/1.5 system-ui, sans-serif; }
+    header { padding: 12px 18px; background: #fff7df; border-bottom: 2px solid #dfa520; }
+    .heading { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+    h1 { font-size: 18px; margin: 0; }
+    p { margin: 5px 0; }
+    .tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 9px; }
+    button, a { font: inherit; }
+    button { min-height: 38px; padding: 6px 12px; border: 1px solid #bcc4d4; border-radius: 8px; background: white; color: #24304e; cursor: pointer; }
+    button[aria-pressed="true"] { background: #b82923; color: #fff; border-color: #b82923; }
+    button:disabled { opacity: .55; cursor: wait; }
+    a { color: #0b526a; text-underline-offset: 3px; }
+    .reset { margin-left: auto; }
+    #status { margin: 4px 0 0; min-height: 21px; }
+    #status[data-error="true"] { color: #a72121; font-weight: bold; }
+    .stage { flex: 1; min-height: 0; display: flex; justify-content: center; padding: 0; }
+    iframe { background: #fff; width: 100%; border: 0; height: 100%; }
+    .stage.phone iframe { width: min(390px, 100%); border-inline: 1px solid #c8d0de; }
+    details { margin-top: 6px; }
+    summary { cursor: pointer; }
+    ol { margin: 8px 0; padding-left: 24px; }
+    @media(max-width:600px) { header { padding: 8px 10px; } h1 { font-size: 16px; } .reset { margin-left: 0; } .heading span { font-size: 12px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="heading"><h1>打ち上げアプリのテスト画面</h1><span>本番接続なし・架空データ／サーバーを止めるとデータは消えます</span></div>
+    <div class="tools" aria-label="テスト操作">
+      <button data-role="admin">管理者</button><button data-role="member">参加者</button><button data-role="manager">担当者</button><button data-role="guest">ログイン前</button>
+      <button id="width" aria-pressed="false">スマホ幅で見る</button>
+      <a href="/__demo/sample.xlsx" download>テスト用Excel（2名）</a>
+      <button id="reset" class="reset">最初の状態に戻す</button>
+    </div>
+    <details><summary>試し方を見る</summary><ol>
+      <li>「管理者」→アプリの「管理する」→「参加者」で、Excel一括登録を試せます。「テスト用Excel（2名）」を保存して選んでください。</li>
+      <li>「参加者」で注文し、「担当者」で同じグループの注文・会計を確認できます。メニュー名と価格もテスト用です。</li>
+      <li>ページを再読み込みすると、ログイン状態を保って戻ります。ログアウト後は上部の役割ボタンで入り直せます。実Discordの認証は行いません。</li>
+      <li>登録や注文はこのテスト内だけです。実際の参加者情報は使わず、架空の情報でお試しください。</li>
+    </ol></details>
+    <p id="status" role="status" aria-live="polite">画面を準備しています…</p>
+  </header>
+  <main class="stage"><iframe title="打ち上げアプリ操作画面" sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-downloads"></iframe></main>
+  <script type="module">
+    const frame = document.querySelector('iframe');
+    const status = document.querySelector('#status');
+    const roleButtons = [...document.querySelectorAll('[data-role]')];
+    let busy = false;
+    function notice(text, error = false) { status.textContent = text; status.dataset.error = String(error); }
+    async function changeRole(role, reset = false) {
+      if (busy) return;
+      busy = true;
+      document.querySelectorAll('button').forEach(button => button.disabled = true);
+      try {
+        const response = await fetch(reset ? '/__demo/reset' : '/__demo/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role }) });
+        const result = await response.json();
+        if (!response.ok || !result.success) throw new Error(result.message || 'テスト画面を切り替えられませんでした。');
+        roleButtons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.role === role)));
+        frame.src = '/';
+        notice(reset ? '架空データを最初の状態に戻しました。' : 'テスト用の画面を表示しています。');
+      } catch (error) { notice(error.message, true); }
+      finally { busy = false; document.querySelectorAll('button').forEach(button => button.disabled = false); }
+    }
+    roleButtons.forEach(button => button.addEventListener('click', () => changeRole(button.dataset.role)));
+    document.querySelector('#reset').addEventListener('click', () => { if (confirm('このテスト内の入力・注文を消して、最初の架空データに戻しますか？')) changeRole('admin', true); });
+    document.querySelector('#width').addEventListener('click', (event) => {
+      const phone = document.querySelector('.stage').classList.toggle('phone');
+      event.currentTarget.setAttribute('aria-pressed', String(phone));
+      event.currentTarget.textContent = phone ? '画面いっぱいに戻す' : 'スマホ幅で見る';
+    });
+    const params = new URLSearchParams(location.search);
+    const initialRole = params.get('role');
+    if (['admin', 'member', 'manager', 'guest'].includes(initialRole)) {
+      history.replaceState({}, '', '/__demo');
+      await changeRole(initialRole);
+    } else { frame.src = '/'; notice('上部の役割ボタンでテスト用ログインができます。'); }
+  </script>
+</body>
+</html>

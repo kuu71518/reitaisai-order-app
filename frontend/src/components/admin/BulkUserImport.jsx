@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { ApiError, apiRequest, getErrorMessage } from '../../lib/api';
 import { countBulkUserLines, maskDiscordUserId, parseBulkUsers } from '../../lib/bulkUsers';
+import { excelUserError, validateExcelUserFile } from '../../lib/excelUsers';
 import { Field, StatusNotice } from '../States';
 
 const FIELD_LABELS = {
@@ -29,22 +30,26 @@ function getServerRowErrors(error, rows) {
       ? 'すでに登録済みのDiscordアカウントです。'
       : '一括入力内でDiscordアカウントが重複しています。';
     return duplicateRows.map((rowNumber) => {
-      const sourceLine = rows[Number(rowNumber) - 1]?.sourceLine;
-      return `${sourceLine || rowNumber}人目：${reason}`;
+      const row = rows[Number(rowNumber) - 1];
+      return `${row?.sourceKind === 'excel' ? `Excel ${row.sourceLine}行目` : `${row?.sourceLine || rowNumber}人目`}：${reason}`;
     });
   }
 
   const validationErrors = Array.isArray(payload?.data?.errors) ? payload.data.errors : [];
   return validationErrors.map((item) => {
-    const sourceLine = rows[Number(item?.row) - 1]?.sourceLine || item?.row;
+    const row = rows[Number(item?.row) - 1];
+    const sourceLine = row?.sourceLine || item?.row;
     const fields = Array.isArray(item?.fields)
       ? item.fields.map((field) => FIELD_LABELS[field] || field).join('、')
       : '';
-    return `${sourceLine || '?'}人目：${fields || '入力内容'}を確認してください。`;
+    return `${row?.sourceKind === 'excel' ? `Excel ${sourceLine}行目` : `${sourceLine || '?'}人目`}：${fields || '入力内容'}を確認してください。`;
   });
 }
 
 export default function BulkUserImport({ groups = [], onComplete }) {
+  const [inputMode, setInputMode] = useState('excel');
+  const [excelFile, setExcelFile] = useState(null);
+  const [reading, setReading] = useState(false);
   const [draft, setDraft] = useState({
     names: '',
     discordUserIds: '',
@@ -56,6 +61,8 @@ export default function BulkUserImport({ groups = [], onComplete }) {
   const [notice, setNotice] = useState(null);
   const [serverErrors, setServerErrors] = useState([]);
   const namesInputRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const operationRef = useRef(false);
   const resultRef = useRef(null);
 
   const availableGroups = [...new Set(
@@ -65,6 +72,7 @@ export default function BulkUserImport({ groups = [], onComplete }) {
   const namesCount = countBulkUserLines(draft.names);
   const discordIdsCount = countBulkUserLines(draft.discordUserIds);
   const hasAnyListInput = draft.names.trim() !== '' || draft.discordUserIds.trim() !== '';
+  const hasAnyInput = inputMode === 'excel' ? Boolean(excelFile) : hasAnyListInput;
   const countsMatch = namesCount > 0 && namesCount === discordIdsCount;
   const errorFields = new Set(preview?.errors.flatMap((error) => {
     if (error.field === 'lists' || error.field === 'count') return ['names', 'discordUserIds'];
@@ -87,9 +95,42 @@ export default function BulkUserImport({ groups = [], onComplete }) {
   };
 
   const clearLists = () => {
-    setDraft((current) => ({ ...current, names: '', discordUserIds: '' }));
+    if (inputMode === 'excel') {
+      setExcelFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    } else {
+      setDraft((current) => ({ ...current, names: '', discordUserIds: '' }));
+    }
     invalidateReview();
-    window.requestAnimationFrame(() => namesInputRef.current?.focus());
+    window.requestAnimationFrame(() => (inputMode === 'excel' ? fileInputRef : namesInputRef).current?.focus());
+  };
+
+  const prepareExcelPreview = async (file = excelFile) => {
+    if (operationRef.current || !file) return;
+    operationRef.current = true;
+    setReading(true);
+    setBusy(true);
+    invalidateReview();
+    let result;
+    try {
+      const fileError = validateExcelUserFile(file);
+      if (fileError) {
+        result = { rows: [], errors: [excelUserError(0, 'file', fileError)] };
+      } else {
+        const { readExcelUsers } = await import('../../lib/excelUsersFile');
+        result = await readExcelUsers(file, availableGroups);
+      }
+    } catch {
+      result = { rows: [], errors: [excelUserError(0, 'file', '読込機能を準備できませんでした。通信状態を確認して、もう一度お試しください。')] };
+    }
+    setPreview(result);
+    setNotice(result.errors.length
+      ? { tone: 'danger', title: 'Excelの入力内容を確認してください', message: '1人も登録していません。下の内容を修正して保存し、ファイルを選び直してください。' }
+      : { tone: 'success', title: `${result.rows.length}人分を読み込みました`, message: '各行の名前・ID末尾・グループ・権限を確認してから、一括追加を押してください。まだ登録していません。' });
+    setReading(false);
+    setBusy(false);
+    operationRef.current = false;
+    focusResult();
   };
 
   const preparePreview = () => {
@@ -107,7 +148,8 @@ export default function BulkUserImport({ groups = [], onComplete }) {
   };
 
   const addUsers = async () => {
-    if (busy || !preview || preview.errors.length > 0 || preview.rows.length === 0) return;
+    if (operationRef.current || busy || !preview || preview.errors.length > 0 || preview.rows.length === 0) return;
+    operationRef.current = true;
     setBusy(true);
     setNotice(null);
     setServerErrors([]);
@@ -138,12 +180,15 @@ export default function BulkUserImport({ groups = [], onComplete }) {
           : getErrorMessage(error, '通信状態を確認して、もう一度お試しください。'),
       });
       setBusy(false);
+      operationRef.current = false;
       focusResult();
       return;
     }
 
     const createdCount = Number(payload?.data?.created_count) || submittedRows.length;
     setDraft({ names: '', discordUserIds: '', groupId: '', role: 'member' });
+    setExcelFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
     setPreview(null);
     setNotice({ tone: 'success', title: `${createdCount}人を追加しました`, message: '参加者一覧も最新の状態に更新します。' });
 
@@ -161,6 +206,7 @@ export default function BulkUserImport({ groups = [], onComplete }) {
       });
     }
     setBusy(false);
+    operationRef.current = false;
     focusResult();
   };
 
@@ -169,19 +215,44 @@ export default function BulkUserImport({ groups = [], onComplete }) {
       <div className="admin-panel-heading">
         <div>
           <p className="admin-eyebrow">まとめて登録</p>
-          <h2 id="admin-bulk-person-heading">同じグループの参加者をまとめて追加</h2>
+          <h2 id="admin-bulk-person-heading">参加者をまとめて追加</h2>
         </div>
-        <p className="admin-panel-description">参加者名とDiscordユーザーIDだけを同じ順番で入力し、全員に共通の設定を選びます。</p>
+        <p className="admin-panel-description">Excelのリスト、または名前とIDの入力から、最大100人を確認して一括登録できます。</p>
       </div>
 
-      <div className="admin-bulk-guide">
+      <div className="admin-bulk-mode" role="group" aria-label="一括追加の入力方法">
+        <button type="button" className={`admin-button ${inputMode === 'excel' ? 'admin-button-primary' : 'admin-button-secondary'}`} aria-pressed={inputMode === 'excel'} disabled={busy} onClick={() => { setInputMode('excel'); invalidateReview(); }}>Excelファイルから</button>
+        <button type="button" className={`admin-button ${inputMode === 'lists' ? 'admin-button-primary' : 'admin-button-secondary'}`} aria-pressed={inputMode === 'lists'} disabled={busy} onClick={() => { setInputMode('lists'); setExcelFile(null); invalidateReview(); }}>名前とIDを直接入力</button>
+      </div>
+
+      {inputMode === 'lists' && <div className="admin-bulk-guide">
         <strong>同じ番号どうしで1人として登録します</strong>
         <span>参加者名の1人目と、DiscordユーザーIDの1人目が同じ人です。カンマや見出し行は必要ありません。</span>
-      </div>
+      </div>}
 
       <div className="admin-form" aria-busy={busy}>
         {(!preview || preview.errors.length > 0) && (
           <>
+            {inputMode === 'excel' ? <div className="admin-excel-source">
+              <div className="admin-bulk-guide">
+                <strong>1行につき1人。グループや権限を別々に指定できます</strong>
+                <span>テンプレートの「メンバー追加」シートの2〜101行目へ入力してください。DiscordユーザーIDは文字列のまま貼り付けます。</span>
+                <a className="admin-excel-template" href="/templates/member-import.xlsx" download="メンバー追加リスト.xlsx">Excelテンプレートをダウンロード</a>
+              </div>
+              <p className="admin-bulk-settings-hint">登録可能なグループ：{availableGroups.length ? availableGroups.join('、') : 'グループがありません'}<br />権限：一般参加者 または 担当者</p>
+              <Field label="入力済みのExcelファイル" required>
+                <input ref={fileInputRef} type="file" className="admin-input admin-excel-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={busy || availableGroups.length === 0} aria-describedby="admin-excel-hint" onChange={(event) => {
+                  const file = event.target.files?.[0] || null;
+                  event.target.value = '';
+                  setExcelFile(file);
+                  invalidateReview();
+                  if (file) void prepareExcelPreview(file);
+                }} />
+                {excelFile && <span className="field-hint">選択中：{excelFile.name}</span>}
+                <span id="admin-excel-hint" className="field-hint">.xlsx形式・1MB以下。ファイルの内容はこの画面内で読み取り、一括追加を押すまで送信しません。</span>
+              </Field>
+              {reading && <p role="status">Excelファイルを読み込んでいます…</p>}
+            </div> : <>
             <div className="admin-bulk-source-grid">
               <Field label="1. 参加者名を入力" required>
                 <textarea
@@ -265,6 +336,7 @@ export default function BulkUserImport({ groups = [], onComplete }) {
               </Field>
             </div>
             <p id="admin-bulk-settings-hint" className="admin-bulk-settings-hint">グループや権限が違う人は、分けて追加してください。権限は「一般参加者」が標準です。</p>
+            </>}
           </>
         )}
 
@@ -291,16 +363,17 @@ export default function BulkUserImport({ groups = [], onComplete }) {
                 </div>
                 <strong>{preview.rows.length}人</strong>
               </div>
-              <div className="admin-bulk-preview-settings">
+              {inputMode === 'lists' && <div className="admin-bulk-preview-settings">
                 <span>全員の設定</span>
                 <strong>{preview.rows[0].group_id}・{roleLabel(preview.rows[0].role)}</strong>
-              </div>
+              </div>}
               <ol className="admin-bulk-preview-list" tabIndex="0" aria-label="追加する参加者の組み合わせ">
                 {preview.rows.map((row) => (
                   <li key={`${row.sourceLine}-${row.name}`}>
-                    <span>{row.sourceLine}人目</span>
+                    <span>{row.sourceKind === 'excel' ? `Excel ${row.sourceLine}行目` : `${row.sourceLine}人目`}</span>
                     <strong>{row.name}</strong>
                     <small>Discord ID {maskDiscordUserId(row.discord_user_id)}</small>
+                    {inputMode === 'excel' && <small>{row.group_id}・{roleLabel(row.role)}</small>}
                   </li>
                 ))}
               </ol>
@@ -309,9 +382,9 @@ export default function BulkUserImport({ groups = [], onComplete }) {
         </div>
 
         <div className="admin-form-actions">
-          {hasAnyListInput && (!preview || preview.errors.length > 0) && (
+          {hasAnyInput && (!preview || preview.errors.length > 0) && (
             <button type="button" className="admin-button admin-button-secondary" onClick={clearLists} disabled={busy}>
-              名前とIDを消す
+              {inputMode === 'excel' ? '選択を解除' : '名前とIDを消す'}
             </button>
           )}
           {preview && preview.errors.length === 0 && preview.rows.length > 0 ? (
@@ -321,7 +394,7 @@ export default function BulkUserImport({ groups = [], onComplete }) {
                 className="admin-button admin-button-secondary"
                 onClick={() => {
                   invalidateReview();
-                  window.requestAnimationFrame(() => namesInputRef.current?.focus());
+                  window.requestAnimationFrame(() => (inputMode === 'excel' ? fileInputRef : namesInputRef).current?.focus());
                 }}
                 disabled={busy}
               >
@@ -332,8 +405,8 @@ export default function BulkUserImport({ groups = [], onComplete }) {
               </button>
             </>
           ) : (
-            <button type="button" className="admin-button admin-button-primary" onClick={preparePreview} disabled={busy || !hasAnyListInput}>
-              名前とIDの組み合わせを確認
+            <button type="button" className="admin-button admin-button-primary" onClick={inputMode === 'excel' ? () => prepareExcelPreview() : preparePreview} disabled={busy || !hasAnyInput}>
+              {reading ? '読み込んでいます' : inputMode === 'excel' ? 'Excelの内容を確認' : '名前とIDの組み合わせを確認'}
             </button>
           )}
         </div>
