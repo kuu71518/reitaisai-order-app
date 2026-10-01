@@ -39,3 +39,12 @@ test('outcomes are matched by request ID and leave unrelated cart entries unchan
   const nextRequest = { ...item, request_id: 'test-order-request-next' };
   assert.deepEqual(applyOrderSubmissionResults([nextRequest], [item], [{ status: 'fulfilled' }]), [nextRequest]);
 });
+
+test('only a confirmed history-clear receipt removes an uncertain retry without recreating it', () => {
+  const uncertain = { ...item, needsConfirmation: true };
+  const receipt = { status: 'rejected', reason: { status: 410, payload: { code: 'ORDER_HISTORY_CLEARED' } } };
+  assert.deepEqual(applyOrderSubmissionResults([uncertain], [uncertain], [receipt]), []);
+  assert.deepEqual(applyOrderSubmissionResults([uncertain], [uncertain], [rejected(410)]), [uncertain]);
+  const other = { ...uncertain, request_id: 'test-other-request' };
+  assert.deepEqual(applyOrderSubmissionResults([uncertain, other], [uncertain, other], [receipt, rejected(0)]), [other]);
+});

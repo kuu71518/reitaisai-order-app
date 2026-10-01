@@ -4,7 +4,7 @@ import { apiFetcher, apiRequest, getErrorMessage } from '../lib/api';
 import { formatTime, formatYen, getOrderStatus, orderTotal } from '../lib/format';
 import { visibleMenuItemsForRole } from '../lib/menuVisibility';
 import { createRequestId } from '../lib/requestId';
-import { applyOrderSubmissionResults, changeCartQuantity } from '../lib/orderRetry';
+import { applyOrderSubmissionResults, changeCartQuantity, wasOrderHistoryCleared } from '../lib/orderRetry';
 import { millisecondsUntilNextMinute, shouldShowLateNightNotice } from '../lib/time';
 import { EmptyState, LoadingState, ScreenIntro, StatusNotice } from './States';
 
@@ -207,8 +207,10 @@ export default function Menu({ currentUser, view, onViewChange, onSubmittingChan
 
     const successfulIds = new Set();
     const failed = [];
+    let clearedCount = 0;
     results.forEach((result, index) => {
       if (result.status === 'fulfilled') successfulIds.add(submittedItems[index].menu_item_id);
+      else if (wasOrderHistoryCleared(result.reason)) clearedCount += 1;
       else failed.push(result.reason);
     });
 
@@ -217,7 +219,7 @@ export default function Menu({ currentUser, view, onViewChange, onSubmittingChan
     setIsSubmitting(false);
     onSubmittingChange(false);
 
-    if (failed.length === 0) {
+    if (failed.length === 0 && clearedCount === 0) {
       showFeedback('success', '注文を送信しました', '担当者が内容を確認します。注文履歴で状態を確認できます。');
       onViewChange('history');
       await historyQuery.mutate();
@@ -225,10 +227,16 @@ export default function Menu({ currentUser, view, onViewChange, onSubmittingChan
     }
 
     const successCount = successfulIds.size;
+    if (failed.length === 0 && clearedCount > 0) {
+      showFeedback('warning', `${clearedCount}件は管理者による履歴削除済みです`,
+        `${successCount > 0 ? `${successCount}件の受付を確認しました。` : ''}削除済みの注文をカートから外しました。新たに注文する場合は、メニューから選び直してください。`);
+      await historyQuery.mutate();
+      return;
+    }
     showFeedback(
       successCount > 0 ? 'warning' : 'danger',
       successCount > 0 ? `${successCount}件の受付を確認、${failed.length}件は確認できませんでした` : '注文の受付を確認できませんでした',
-      `${getErrorMessage(failed[0], '通信状態を確認してください。')} 注文が届いている可能性があります。結果不明の商品は内容を変えずに再確認できます。`,
+      `${clearedCount > 0 ? `${clearedCount}件は履歴削除済みのためカートから外しました。` : ''}${getErrorMessage(failed[0], '通信状態を確認してください。')} 注文が届いている可能性があります。結果不明の商品は内容を変えずに再確認できます。`,
     );
     if (successCount > 0) await historyQuery.mutate();
   };

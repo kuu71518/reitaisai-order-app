@@ -8,9 +8,11 @@ import AdminDashboard from './components/AdminDashboard';
 import VenueGuide from './components/VenueGuide';
 import NavIcon from './components/NavIcon';
 import ConfirmDialog from './components/ConfirmDialog';
+import PushNotificationSettings from './components/PushNotificationSettings';
 import { LoadingState, StatusNotice } from './components/States';
 import { useManagerOrders } from './hooks/useManagerOrders';
 import { ApiError, apiRequest, clearSessionToken, loadSession } from './lib/api';
+import { canManageOrders, collectOrderNotifications, getNavItems } from './lib/orderAccess';
 
 const LEGACY_USER_KEY = 'reitaisai_app_user';
 const ACTIVE_TAB_KEY = 'reitaisai_active_tab';
@@ -25,11 +27,6 @@ const SESSION_STORAGE_KEYS = [
   HIDDEN_AT_KEY,
   LAST_ACTIVE_KEY,
   LEGACY_NOTIFICATION_KEY,
-];
-
-const BASE_NAV_ITEMS = [
-  { id: 'menu', label: 'メニュー' },
-  { id: 'history', label: '注文履歴' },
 ];
 
 function readSessionItem(key) {
@@ -79,21 +76,6 @@ function compactUser(user) {
   };
 }
 
-function getNavItems(user) {
-  if (!user) return BASE_NAV_ITEMS;
-  if (user.role === 'manager') {
-    return [
-      ...BASE_NAV_ITEMS,
-      { id: 'manager', label: '取りまとめ' },
-      { id: 'summary', label: '会計' },
-    ];
-  }
-  if (user.role === 'admin') {
-    return [...BASE_NAV_ITEMS, { id: 'admin', label: '管理' }];
-  }
-  return BASE_NAV_ITEMS;
-}
-
 export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [authState, setAuthState] = useState('loading');
@@ -108,6 +90,7 @@ export default function App() {
   const [orderBusy, setOrderBusy] = useState(false);
   const mainRef = useRef(null);
   const [activeTab, setActiveTab] = useState(() => {
+    if (new URLSearchParams(window.location.search).get('view') === 'manager') return 'manager';
     const storedTab = readSessionItem(ACTIVE_TAB_KEY);
     return storedTab || 'menu';
   });
@@ -139,18 +122,12 @@ export default function App() {
   }, []);
 
   const handleManagerOrders = useCallback((orders) => {
-    const orderIds = orders.map((order) => order.id);
-    if (!orderBaselineReady.current) {
-      notifiedOrderIds.current = new Set(orderIds);
-      orderBaselineReady.current = true;
-      return;
-    }
-
-    const newOrders = orders.filter((order) => !notifiedOrderIds.current.has(order.id));
-    if (newOrders.length === 0) return;
-
-    newOrders.forEach((order) => notifiedOrderIds.current.add(order.id));
-    showOrderToast(newOrders.length);
+    const { ids, newCount } = collectOrderNotifications(
+      orderBaselineReady.current ? notifiedOrderIds.current : null, orders,
+    );
+    notifiedOrderIds.current = ids;
+    orderBaselineReady.current = true;
+    if (newCount > 0) showOrderToast(newCount);
   }, [showOrderToast]);
 
   const managerOrders = useManagerOrders(currentUser, handleManagerOrders);
@@ -246,6 +223,17 @@ export default function App() {
     window.addEventListener('reitaisai:auth-expired', handleExpired);
     return () => window.removeEventListener('reitaisai:auth-expired', handleExpired);
   }, [clearClientSession]);
+
+  useEffect(() => {
+    const openOrders = (event) => {
+      if (event.data?.type !== 'OPEN_MANAGER_ORDERS' || !canManageOrders(currentUser) || orderBusy) return;
+      setActiveTab('manager');
+      setLatestToast(null);
+      setUnreadCount(0);
+    };
+    navigator.serviceWorker?.addEventListener('message', openOrders);
+    return () => navigator.serviceWorker?.removeEventListener('message', openOrders);
+  }, [currentUser, orderBusy]);
 
   useEffect(() => {
     if (currentUser) writeSessionItem(ACTIVE_TAB_KEY, activeTab);
@@ -381,7 +369,15 @@ export default function App() {
   } else if (safeActiveTab === 'summary') {
     screen = <Summary key={userContextKey} currentUser={currentUser} />;
   } else if (safeActiveTab === 'admin') {
-    screen = <AdminDashboard key={userContextKey} />;
+    screen = <AdminDashboard key={userContextKey} onOrderHistoryCleared={() => {
+      setLatestToast(null);
+      setUnreadCount(0);
+      window.clearTimeout(toastTimer.current);
+      return mutateAll((key) => {
+        const url = Array.isArray(key) ? key[0] : key;
+        return typeof url === 'string' && (url.startsWith('/api/orders/') || url.startsWith('/api/manager/orders'));
+      });
+    }} />;
   }
 
   return (
@@ -400,7 +396,7 @@ export default function App() {
           </div>
         </div>
         <div className="top-actions">
-          {currentUser.role === 'manager' && (
+          {canManageOrders(currentUser) && (
             <button
               type="button"
               className="icon-text-button"
@@ -448,7 +444,8 @@ export default function App() {
           <span>{currentUser.name}<small>さん</small></span>
         </div>
         <VenueGuide compact />
-        {currentUser.role === 'manager' && unreadCount > 0 && safeActiveTab !== 'manager' && (
+        {canManageOrders(currentUser) && <PushNotificationSettings key={userContextKey} currentUser={currentUser} />}
+        {canManageOrders(currentUser) && unreadCount > 0 && safeActiveTab !== 'manager' && (
           <StatusNotice
             tone="warning"
             title={`${unreadCount}件の新しい注文があります`}

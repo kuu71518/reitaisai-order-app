@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import useSWR from 'swr';
 import { apiFetcher } from '../lib/api';
+import { canManageOrders } from '../lib/orderAccess';
 
 export function useManagerOrders(currentUser, onOrders) {
-  const isManager = currentUser?.role === 'manager';
+  const isManager = canManageOrders(currentUser);
   const userScope = isManager ? JSON.stringify([currentUser.id, currentUser.group_id, currentUser.role]) : null;
   const key = isManager
     ? ['/api/manager/orders?status=pending', userScope]

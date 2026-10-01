@@ -11,6 +11,8 @@ export type Bindings = {
   DISCORD_REDIRECT_URI?: string;
   DISCORD_ID_HMAC_KEY?: string;
   BOOTSTRAP_ADMIN_DISCORD_USER_ID?: string;
+  WEB_PUSH_PUBLIC_KEY?: string;
+  WEB_PUSH_PRIVATE_KEY?: string;
 };
 
 export type SessionUser = {

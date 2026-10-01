@@ -19,6 +19,8 @@ import {
   timingSafeEqual,
 } from './security.js';
 import type { AppEnv, AuthContext, Bindings, SessionUser, UserRole } from './types.js';
+import { clearOrderHistory, ORDER_HISTORY_CONFIRMATION, readOrderHistory } from './order-history.ts';
+import { allowedPushEndpoint, getPushConfig, notifyOrder } from './push.ts';
 
 // Keep this browser signed in for at most 30 days after Discord authentication.
 // Activity must not extend that deadline or refresh the administrator auth time.
@@ -344,6 +346,22 @@ async function readResetPreview(env: Bindings, currentSessionId: number): Promis
   };
 }
 
+async function missingOrderResponse(c: Context<AppEnv>, userId: number, requestId: string) {
+  const cleared = await c.env.DB.prepare(`
+    SELECT 1 AS cleared FROM cleared_order_requests WHERE user_id = ? AND client_request_id = ?
+  `).bind(userId, requestId).first();
+  if (cleared) return fail(c, 410, 'この注文は管理者が履歴を削除済みです。新たに注文する場合はメニューから選び直してください。', 'ORDER_HISTORY_CLEARED');
+  return fail(c, 500, '注文を保存できませんでした。');
+}
+
+function sendOrderNotifications(c: Context<AppEnv>, orderId: number) {
+  if (!getPushConfig(c.env)) return;
+  // Keep notification failures separate from order acceptance and retries.
+  c.executionCtx.waitUntil(notifyOrder(c.env, orderId).catch(() => {
+    console.error(JSON.stringify({ event: 'order_push_delivery_failed' }));
+  }));
+}
+
 async function issueSession(c: Context<AppEnv>, user: SessionUser) {
   const now = nowSeconds();
   const sessionToken = randomToken(32);
@@ -537,6 +555,50 @@ app.get('/api/menu', async (c) => {
   return c.json({ success: true, data: results });
 });
 
+app.get('/api/notifications/config', (c) => {
+  const roleError = requireRole(c, ['manager', 'admin']);
+  if (roleError) return roleError;
+  const config = getPushConfig(c.env);
+  return c.json({ success: true, data: { configured: Boolean(config), public_key: config?.publicKey || null } });
+});
+
+app.post('/api/notifications/subscriptions', async (c) => {
+  const roleError = requireRole(c, ['manager', 'admin']);
+  if (roleError) return roleError;
+  const config = getPushConfig(c.env);
+  if (!config) return fail(c, 503, 'プッシュ通知の公開設定が完了していません。', 'PUSH_NOT_CONFIGURED');
+  const body = await readJsonObject(c);
+  if (!allowedPushEndpoint(body?.endpoint) || body?.public_key !== config.publicKey) {
+    return fail(c, 422, '通知の登録情報が正しくありません。対応ブラウザで通知設定をやり直してください。');
+  }
+  const auth = c.get('auth');
+  const now = nowSeconds();
+  const result = await c.env.DB.prepare(`
+    INSERT INTO push_subscriptions (endpoint, user_id, session_id, application_server_key, created_at, updated_at)
+    SELECT ?, ?, ?, ?, ?, ?
+    WHERE (SELECT COUNT(*) FROM push_subscriptions p
+      JOIN auth_sessions s ON s.id = p.session_id
+      WHERE p.user_id = ? AND s.revoked_at IS NULL AND s.absolute_expires_at > ? AND s.idle_expires_at > ?
+        AND p.application_server_key = ?) < 5
+      OR EXISTS (SELECT 1 FROM push_subscriptions WHERE endpoint = ? AND user_id = ?)
+    ON CONFLICT(endpoint) DO UPDATE SET user_id = excluded.user_id, session_id = excluded.session_id,
+      application_server_key = excluded.application_server_key, updated_at = excluded.updated_at
+  `).bind(body.endpoint, auth.user.id, auth.sessionId, config.publicKey, now, now,
+    auth.user.id, now, now, config.publicKey, body.endpoint, auth.user.id).run();
+  if (result.meta.changes !== 1) return fail(c, 409, '通知を受け取る端末は5台までです。別の端末の通知を止めてください。');
+  return c.json({ success: true });
+});
+
+app.delete('/api/notifications/subscriptions', async (c) => {
+  const roleError = requireRole(c, ['manager', 'admin']);
+  if (roleError) return roleError;
+  const body = await readJsonObject(c);
+  if (!allowedPushEndpoint(body?.endpoint)) return fail(c, 422, '通知の登録情報が正しくありません。');
+  await c.env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ? AND user_id = ?')
+    .bind(body.endpoint, c.get('auth').user.id).run();
+  return c.json({ success: true });
+});
+
 app.post('/api/orders', async (c) => {
   const auth = c.get('auth');
   const body = await readJsonObject(c);
@@ -578,10 +640,11 @@ app.post('/api/orders', async (c) => {
   const order = await c.env.DB.prepare(`
     SELECT id FROM orders WHERE user_id = ? AND client_request_id = ?
   `).bind(auth.user.id, requestId).first<{ id: number }>();
-  if (!order) return fail(c, 500, '注文を保存できませんでした。');
+  if (!order) return missingOrderResponse(c, auth.user.id, requestId);
 
   if (inserted.meta.changes === 1) {
     await audit(c.env, auth.user.id, 'ORDER_CREATE', 'order', order.id, { quantity });
+    sendOrderNotifications(c, order.id);
   }
   return c.json({ success: true, data: { order_id: order.id, duplicate: inserted.meta.changes === 0 } });
 });
@@ -620,6 +683,7 @@ app.get('/api/manager/orders', async (c) => {
       o.status,
       CASE WHEN o.order_source = 'admin' THEN 1 ELSE 0 END AS added_by_admin,
       u.name AS user_name,
+      u.group_id,
       o.menu_name_snapshot AS menu_name,
       o.menu_size_snapshot AS size
     FROM orders o
@@ -701,12 +765,12 @@ app.get('/api/orders/summary', async (c) => {
   const auth = c.get('auth');
   const isAdmin = auth.user.role === 'admin';
   const sql = `
-    SELECT u.name, SUM(o.unit_price_snapshot * o.quantity) AS total_price
+    SELECT u.id AS user_id, u.name, u.group_id, SUM(o.unit_price_snapshot * o.quantity) AS total_price
     FROM orders o
     JOIN users u ON u.id = o.user_id
     WHERE o.status != 'cancelled' ${isAdmin ? '' : 'AND u.group_id = ?'}
-    GROUP BY u.id, u.name
-    ORDER BY u.name
+    GROUP BY u.id, u.name, u.group_id
+    ORDER BY u.group_id, u.name, u.id
   `;
   const statement = c.env.DB.prepare(sql);
   const { results } = isAdmin
@@ -734,6 +798,42 @@ app.get('/api/admin/stats', async (c) => {
       total_sales: value(sales, 'total'),
     },
   });
+});
+
+app.get('/api/admin/order-history/preview', async (c) => {
+  const roleError = requireRole(c, ['admin']);
+  if (roleError) return roleError;
+  const { preview } = await readOrderHistory(c.env);
+  return c.json({ success: true, data: preview });
+});
+
+app.post('/api/admin/order-history/clear', async (c) => {
+  const roleError = requireRole(c, ['admin']);
+  if (roleError) return roleError;
+  const recentLoginError = requireRecentAdminLogin(c);
+  if (recentLoginError) return recentLoginError;
+  const body = await readJsonObject(c);
+  if (body?.backup_confirmed !== true) {
+    return fail(c, 422, '復元地点を記録したことを確認してください。', 'BACKUP_CONFIRMATION_REQUIRED');
+  }
+  if (body.confirmation !== ORDER_HISTORY_CONFIRMATION) {
+    return fail(c, 422, '確認用の文字が一致しません。', 'ORDER_HISTORY_CONFIRMATION_MISMATCH');
+  }
+  if (typeof body.snapshot_token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(body.snapshot_token)) {
+    return fail(c, 422, '削除対象をもう一度確認してください。', 'ORDER_HISTORY_PREVIEW_REQUIRED');
+  }
+  const expected = await readOrderHistory(c.env);
+  if (body.snapshot_token !== expected.preview.snapshot_token) {
+    return fail(c, 409, '確認後に注文が変わりました。削除済みの場合もあります。最新の件数を確認してください。', 'ORDER_HISTORY_PREVIEW_STALE');
+  }
+  if (expected.preview.order_count === 0) {
+    return fail(c, 409, '削除する注文履歴はありません。', 'ORDER_HISTORY_EMPTY');
+  }
+  const cleared = await clearOrderHistory(c.env, c.get('auth').user.id, expected);
+  if (!cleared) {
+    return fail(c, 409, '確認後に注文が変わりました。最新の件数を確認してください。', 'ORDER_HISTORY_PREVIEW_STALE');
+  }
+  return c.json({ success: true, data: { deleted_order_count: expected.preview.order_count } });
 });
 
 app.get('/api/admin/data-reset/preview', async (c) => {
@@ -953,7 +1053,7 @@ app.post('/api/admin/users/:id/orders', async (c) => {
   const order = await c.env.DB.prepare(`
     SELECT id, status FROM orders WHERE user_id = ? AND client_request_id = ?
   `).bind(userId, requestId).first<{ id: number; status: string }>();
-  if (!order) return fail(c, 500, '注文を保存できませんでした。');
+  if (!order) return missingOrderResponse(c, userId, requestId);
 
   if (inserted.meta.changes === 1) {
     await audit(c.env, auth.user.id, 'ADMIN_ORDER_CREATE', 'order', order.id, {
@@ -961,6 +1061,7 @@ app.post('/api/admin/users/:id/orders', async (c) => {
       quantity,
       status,
     });
+    if (status === 'pending') sendOrderNotifications(c, order.id);
   }
   return c.json({
     success: true,

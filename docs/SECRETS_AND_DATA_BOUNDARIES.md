@@ -1,6 +1,6 @@
 # 秘密情報・個人情報の境界
 
-更新日: 2026-09-14
+更新日: 2026-10-01
 
 この文書には実値を記録しません。設定名、保存先、取扱いだけを定義します。
 
@@ -11,6 +11,7 @@
 - `DISCORD_CLIENT_SECRET`
 - `DISCORD_ID_HMAC_KEY`（ログイン許可の照合値を作る恒久鍵。stagingとproductionで別の32文字以上のランダム値）
 - `BOOTSTRAP_ADMIN_DISCORD_USER_ID`（初回管理者連携時だけ。成功後すぐ削除）
+- `WEB_PUSH_PRIVATE_KEY`（通知送信用の新規P-256秘密鍵。stagingとproductionを分離）
 
 ローカル開発ではGit対象外の`api/.dev.vars`だけへ保存します。Secretを`wrangler.deploy.toml`、SQL、GitHub、Pages環境変数、チャット、スクリーンショットへ書きません。
 
@@ -26,6 +27,7 @@
 - `DISCORD_REDIRECT_URI`
 - Worker名、D1 database名・database ID
 - Pagesの`VITE_API_URL`
+- `WEB_PUSH_PUBLIC_KEY`（対応するP-256公開鍵。管理者・担当者向けの通知設定APIだけでブラウザへ渡す。秘密鍵との一括設定のためWorkers Secretに保存してもよい）
 
 実値入り`api/wrangler.deploy.toml`はGit対象外です。tracked fileはplaceholderだけの`api/wrangler.toml.example`です。
 
@@ -65,7 +67,15 @@
 
 ## 廃止済みの秘密値
 
-原本のVAPID鍵は漏えい済みとして扱い、再利用しません。現在はWeb Push機能と`web-push`依存を撤去しているため、新しいVAPID鍵も設定しません。
+原本のVAPID鍵は漏えい済みとして扱い、再利用しません。Web Pushを再開する環境では、新しく生成した環境別の鍵を設定します。旧鍵の名前や値からの移行・再利用は行いません。`web-push`依存は追加せず、Web CryptoでVAPID署名を生成します。
+
+## プッシュ通知の情報
+
+`push_subscriptions`の通知先URLは、端末への送信能力を持つ非公開の情報です。D1内で利用者と現在のログインsessionに結び付け、運用ログ・画面・Git・release記録に出しません。登録APIは管理者・担当者だけに許可し、CSRF検査を行います。送信時に最新の権限、グループ、利用停止、session失効、鍵の一致を再確認します。sessionや利用者の削除時には外部キー制約で通知登録も削除されます。
+
+送信先は主要ブラウザの既知のHTTPSプッシュサービスに制限し、任意のURLへの送信やredirectを許可しません。送信本文は空で、ロック画面には固定の新着案内だけを表示します。氏名・席名・料理・価格・数量・認証情報を通知本文へ入れません。失敗ログはイベント名とHTTPステータスだけです。
+
+注文履歴削除後の`cleared_order_requests`は再送防止専用で、利用者ID・送信識別子・削除時刻を保持します。管理者の既存操作履歴は履歴削除後も残ります。
 
 ## 設定例
 

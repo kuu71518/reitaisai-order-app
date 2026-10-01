@@ -6,6 +6,7 @@ import { assignableGroups } from '../lib/eventGroups';
 import { EmptyState, Field, LoadingState, ScreenIntro, StatusNotice } from './States';
 import BulkUserImport from './admin/BulkUserImport';
 import DataResetPanel from './admin/DataResetPanel';
+import OrderHistoryClearPanel from './admin/OrderHistoryClearPanel';
 import UserDeleteAction from './admin/UserDeleteAction';
 
 const ADMIN_TABS = [
@@ -44,6 +45,7 @@ const AUDIT_LABELS = {
   USER_UPDATE: '参加者設定変更',
   MENU_CREATE: 'メニュー追加',
   EVENT_DATA_RESET: '開催データリセット',
+  ORDER_HISTORY_CLEAR: '注文履歴だけを削除',
 };
 
 function getData(payload) {
@@ -71,7 +73,7 @@ function validateMenu(values) {
   return { value: { name, category, size, price } };
 }
 
-export default function AdminDashboard() {
+export default function AdminDashboard({ onOrderHistoryCleared }) {
   const [activeTab, setActiveTab] = useState('overview');
   const [loadState, setLoadState] = useState('loading');
   const [loadError, setLoadError] = useState('');
@@ -367,6 +369,14 @@ export default function AdminDashboard() {
       title: '開催データをリセットしました。',
       message: '参加者と注文は削除され、管理者・メニュー・操作履歴は残っています。',
     });
+  };
+
+  const handleOrderHistoryCleared = () => {
+    setOrders([]);
+    setStats((current) => ({ ...current, total_orders: 0, total_cancels: 0, total_sales: 0 }));
+    setAuditLogs([]);
+    setLoadedTabs((current) => current.filter((tab) => !['orders', 'overview', 'logs'].includes(tab)));
+    return onOrderHistoryCleared?.();
   };
 
   const revokeDiscordAccess = async (user) => {
@@ -979,7 +989,15 @@ export default function AdminDashboard() {
     </section>
   );
 
-  const renderSafety = () => <DataResetPanel onComplete={handleDataReset} />;
+  const renderSafety = () => (
+    <div className="admin-section-stack">
+      <OrderHistoryClearPanel onComplete={handleOrderHistoryCleared} />
+      <details className="admin-full-reset-details">
+        <summary>参加者も消す「開催データのリセット」</summary>
+        <DataResetPanel onComplete={handleDataReset} />
+      </details>
+    </div>
+  );
 
   const renderActiveTab = () => {
     if (activeTab === 'people') return renderPeople();

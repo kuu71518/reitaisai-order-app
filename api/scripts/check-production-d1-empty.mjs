@@ -11,6 +11,8 @@ export const BOOTSTRAP_BLOCKING_TABLES = Object.freeze([
   'oauth_states',
   'discord_link_requests',
   'audit_logs',
+  'cleared_order_requests',
+  'push_subscriptions',
 ]);
 
 export const EMPTY_CHECK_SQL = [

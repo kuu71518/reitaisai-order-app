@@ -62,7 +62,7 @@ export function localDemo() {
   async function reset() {
     database?.close()
     database = new DatabaseSync(':memory:')
-    for (const name of ['0001_initial.sql', '0002_security_constraints.sql', '0003_discord_allowlist_and_admin_orders.sql']) {
+    for (const name of ['0001_initial.sql', '0002_security_constraints.sql', '0003_discord_allowlist_and_admin_orders.sql', '0004_cleared_order_requests.sql', '0005_push_subscriptions.sql']) {
       database.exec(readFileSync(new URL(`../../api/migrations/${name}`, import.meta.url), 'utf8'))
     }
     const people = [

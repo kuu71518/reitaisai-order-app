@@ -1116,3 +1116,25 @@
     width: 100%;
   }
 }
+.manager-group-filter {
+  display: grid;
+  gap: 8px;
+  max-width: 440px;
+  margin-bottom: 18px;
+  font-weight: 700;
+}
+
+.manager-group-filter select { width: 100%; min-height: 44px; }
+.summary-person-group { display: block; margin-top: 4px; color: var(--muted); }
+
+.push-settings {
+  max-width: 1040px;
+  margin: 0 auto 18px;
+  padding: 14px 18px;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: white;
+}
+.push-settings summary { cursor: pointer; min-height: 44px; padding-block: 8px; font-weight: 700; }
+.push-settings p { margin: 12px 0; line-height: 1.7; }
+.push-settings button { margin: 4px 10px 4px 0; }

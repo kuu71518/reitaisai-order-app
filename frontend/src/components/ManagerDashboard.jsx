@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { apiRequest, getErrorMessage } from '../lib/api';
 import { formatTime } from '../lib/format';
+import { groupPendingOrders } from '../lib/orderAccess';
 import { EmptyState, LoadingState, ScreenIntro, StatusNotice } from './States';
 import ConfirmDialog from './ConfirmDialog';
 
@@ -18,26 +19,14 @@ export default function ManagerDashboard({
   const [isCompleting, setIsCompleting] = useState(false);
   const [feedback, setFeedback] = useState(null);
   const [ordersToComplete, setOrdersToComplete] = useState(null);
+  const [selectedGroup, setSelectedGroup] = useState('');
+  const isAdmin = currentUser.role === 'admin';
+  const groupOptions = [...new Set(orders.map((order) => order.group_id))].sort((a, b) => String(a).localeCompare(String(b), 'ja'));
+  const visibleOrders = useMemo(() => (
+    isAdmin && selectedGroup ? orders.filter((order) => order.group_id === selectedGroup) : orders
+  ), [isAdmin, orders, selectedGroup]);
 
-  const groupedOrders = useMemo(() => {
-    const groups = new Map();
-    orders.forEach((order) => {
-      const key = `${order.menu_name}::${order.size}`;
-      if (!groups.has(key)) {
-        groups.set(key, {
-          key,
-          menuName: order.menu_name,
-          size: order.size,
-          total: 0,
-          items: [],
-        });
-      }
-      const group = groups.get(key);
-      group.total += Number(quantityDrafts[order.id] ?? order.quantity);
-      group.items.push(order);
-    });
-    return [...groups.values()];
-  }, [orders, quantityDrafts]);
+  const groupedOrders = useMemo(() => groupPendingOrders(visibleOrders, quantityDrafts), [visibleOrders, quantityDrafts]);
 
   const hasUnsavedQuantityDrafts = useMemo(() => orders.some((order) => (
     Object.prototype.hasOwnProperty.call(quantityDrafts, order.id)
@@ -117,7 +106,7 @@ export default function ManagerDashboard({
   return (
     <section className="screen manager-screen">
       <ScreenIntro
-        eyebrow={`${currentUser.group_id} 担当者`}
+        eyebrow={isAdmin ? '全グループ 管理者' : `${currentUser.group_id} 担当者`}
         title="注文を取りまとめる"
         description="個数を確認し、店員へ伝えた後にまとめて「伝達済み」にします。"
         action={(
@@ -127,10 +116,20 @@ export default function ManagerDashboard({
         )}
       />
 
+      {isAdmin && (
+        <label className="manager-group-filter">
+          <span>取りまとめるグループ</span>
+          <select value={selectedGroup} onChange={(event) => setSelectedGroup(event.target.value)} disabled={isCompleting || busyOrderId !== null}>
+            <option value="">すべてのグループ</option>
+            {[...new Set([...groupOptions, ...(selectedGroup ? [selectedGroup] : [])])].map((group) => <option key={group} value={group}>{group}</option>)}
+          </select>
+        </label>
+      )}
+
       <div className="manager-status-row">
         <div className="pending-count-card">
           <span>店員へ伝える注文</span>
-          <strong>{orders.length}<small>件</small></strong>
+          <strong>{visibleOrders.length}<small>件</small></strong>
         </div>
         <div className="last-update-card">
           <span>最終更新</span>
@@ -171,7 +170,7 @@ export default function ManagerDashboard({
             description={getErrorMessage(ordersError, '通信状態を確認してください。')}
             action={<button type="button" className="primary-button compact-button" onClick={() => refreshOrders()}>もう一度読み込む</button>}
           />
-        ) : orders.length === 0 ? (
+        ) : visibleOrders.length === 0 ? (
           <EmptyState
             symbol="○"
             title="現在、新しい注文はありません"
@@ -183,6 +182,7 @@ export default function ManagerDashboard({
               <article key={group.key} className="manager-order-group">
                 <header>
                   <div>
+                    {isAdmin && <span>{group.groupId}</span>}
                     <h3>{group.menuName}</h3>
                     <span>{group.size}</span>
                   </div>
@@ -221,11 +221,11 @@ export default function ManagerDashboard({
           </div>
         )}
 
-        {orders.length > 0 && (
+        {visibleOrders.length > 0 && (
           <div className="complete-orders-panel">
             <div>
               <strong>店員へ伝え終わりましたか？</strong>
-              <span>表示中の{orders.length}件が注文待ち一覧から外れます。</span>
+              <span>表示中の{visibleOrders.length}件が注文待ち一覧から外れます。</span>
               {hasUnsavedQuantityDrafts && (
                 <small id="complete-orders-disabled-reason" role="status">
                   未保存の個数があります。すべての変更を保存してから伝達済みにしてください。
@@ -235,11 +235,11 @@ export default function ManagerDashboard({
             <button
               type="button"
               className="primary-button"
-              onClick={() => setOrdersToComplete(orders.map((order) => order.id))}
+              onClick={() => setOrdersToComplete(visibleOrders.map((order) => order.id))}
               disabled={isCompleting || busyOrderId !== null || hasUnsavedQuantityDrafts}
               aria-describedby={hasUnsavedQuantityDrafts ? 'complete-orders-disabled-reason' : undefined}
             >
-              {isCompleting ? '変更しています…' : `${orders.length}件を伝達済みにする`}
+              {isCompleting ? '変更しています…' : `${visibleOrders.length}件を伝達済みにする`}
             </button>
           </div>
         )}

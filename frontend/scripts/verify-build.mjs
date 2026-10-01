@@ -12,10 +12,11 @@ const applicationScripts = (
 assert.match(serviceWorker, /\/registerSW\.js/)
 assert.match(serviceWorker, /reitaisai-legacy-sw-migration-v1/)
 assert.doesNotMatch(serviceWorker, /(?:\/api\/|order-api\.touhoudaienkai\.com)/)
-assert.doesNotMatch(
-  serviceWorker,
-  /(?:showNotification|notificationclick|addEventListener\([`'"]push)/,
-)
+assert.match(serviceWorker, /addEventListener\([`'"]push[`'"]/)
+assert.match(serviceWorker, /showNotification\([`'"]新しい注文があります[`'"]/)
+assert.match(serviceWorker, /notificationclick/)
+assert.match(serviceWorker, /OPEN_MANAGER_ORDERS/)
+assert.doesNotMatch(serviceWorker, /(?:WEB_PUSH_PRIVATE_KEY|DISCORD_ID_HMAC_KEY|csrf_token|session_token)/)
 
 assert.match(
   headers,

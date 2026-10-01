@@ -26,8 +26,10 @@ function expectCode(callback, code) {
   );
 }
 
-test('query checks the seven application tables and d1_migrations', () => {
-  assert.equal(BOOTSTRAP_BLOCKING_TABLES.length, 8);
+test('query checks the application tables including notifications and cleared requests', () => {
+  assert.equal(BOOTSTRAP_BLOCKING_TABLES.length, 10);
+  assert.ok(BOOTSTRAP_BLOCKING_TABLES.includes('push_subscriptions'));
+  assert.ok(BOOTSTRAP_BLOCKING_TABLES.includes('cleared_order_requests'));
   assert.ok(BOOTSTRAP_BLOCKING_TABLES.includes('d1_migrations'));
   for (const table of BOOTSTRAP_BLOCKING_TABLES) assert.match(EMPTY_CHECK_SQL, new RegExp(`'${table}'`, 'u'));
   assert.match(EMPTY_CHECK_SQL, /FROM sqlite_schema/u);
@@ -39,7 +41,7 @@ test('parses Wrangler JSON and accepts an empty production D1', () => {
   assert.equal(assertProductionD1Empty(count), true);
 });
 
-test('blocks migration when any of the eight bootstrap-blocking tables already exists', () => {
+test('blocks migration when any bootstrap-blocking table already exists', () => {
   const count = parseProductionD1CheckOutput(outputWithCount(1));
   expectCode(() => assertProductionD1Empty(count), 'not_empty');
 });

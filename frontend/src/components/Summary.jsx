@@ -4,6 +4,7 @@ import { formatYen } from '../lib/format';
 import { EmptyState, LoadingState, ScreenIntro, StatusNotice } from './States';
 
 export default function Summary({ currentUser }) {
+  const isAdmin = currentUser.role === 'admin';
   const { data, error, isLoading, isValidating, mutate } = useSWR(
     ['/api/orders/summary', currentUser.id, currentUser.group_id, currentUser.role],
     apiFetcher,
@@ -15,8 +16,8 @@ export default function Summary({ currentUser }) {
   return (
     <section className="screen summary-screen">
       <ScreenIntro
-        eyebrow={`${currentUser.group_id} 会計`}
-        title="グループの注文合計（目安）"
+        eyebrow={isAdmin ? '全グループ 会計' : `${currentUser.group_id} 会計`}
+        title={isAdmin ? '全グループの注文合計（目安）' : 'グループの注文合計（目安）'}
         description="担当者が確認中の注文も含め、取消済みを除いて集計しています。店舗への最終支払額は、店員の伝票で確認してください。"
         action={(
           <button type="button" className="secondary-button compact-button" onClick={() => mutate()} disabled={isValidating}>
@@ -42,7 +43,7 @@ export default function Summary({ currentUser }) {
           <article className="summary-total-card" aria-label="グループ会計の合計">
             <div className="summary-total-heading">
               <div>
-                <span>{currentUser.group_id}の合計</span>
+                <span>{isAdmin ? '全グループ' : currentUser.group_id}の合計</span>
                 <small>確認中を含む注文合計・追加料金は別途確認</small>
               </div>
               <strong>{formatYen(groupTotal)}</strong>
@@ -57,8 +58,8 @@ export default function Summary({ currentUser }) {
             <h2 id="summary-people-heading">参加者ごとの金額</h2>
             <ul className="summary-people-list">
               {people.map((person) => (
-                <li key={person.name}>
-                  <span>{person.name}</span>
+                <li key={person.user_id}>
+                  <span>{person.name}{isAdmin && <small className="summary-person-group">{person.group_id}</small>}</span>
                   <strong>{formatYen(person.total_price)}</strong>
                 </li>
               ))}
