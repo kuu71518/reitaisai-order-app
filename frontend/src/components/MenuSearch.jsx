@@ -80,7 +80,7 @@ export default function MenuSearch({ query, category, groups, onQueryChange, onC
           onFocus={() => setIsOpen(true)}
           onBlur={() => { setIsOpen(false); setActiveKey(null); }}
           onKeyDown={handleKeyDown}
-          placeholder="商品名・項目（例：ビール）"
+          placeholder="商品名・項目"
           autoComplete="off"
           enterKeyHint="search"
           spellCheck={false}

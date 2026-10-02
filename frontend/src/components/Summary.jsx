@@ -33,9 +33,10 @@ export default function Summary({ currentUser }) {
           {isValidating ? '更新中…' : '今すぐ更新'}
         </button>}
       />
-      <StatusNotice tone="warning" title="1人につき ＋テーブルチャージ495円（税込）">
-        表示金額は注文分の合計です。テーブルチャージや深夜料金などは含みません。最終支払額は店舗の伝票で確認してください。
-      </StatusNotice>
+      <details className="accounting-charge-note">
+        <summary>＋テーブルチャージ495円（税込）／人</summary>
+        <p>表示金額は注文分の合計です。テーブルチャージや深夜料金などは含みません。最終支払額は店舗の伝票で確認してください。</p>
+      </details>
       {isLoading ? <LoadingState label="会計を集計しています" /> : error ? (
         <StatusNotice tone="danger" title="会計を読み込めませんでした" live>
           {getErrorMessage(error, '通信状態を確認して、もう一度お試しください。')}
@@ -50,7 +51,7 @@ export default function Summary({ currentUser }) {
             <strong>{formatYen(groupTotal)}</strong>
           </div>
           <dl><div><dt>参加者</dt><dd>{people.length}人</dd></div>
-            <div><dt>現金受取確認済み</dt><dd>{people.filter((person) => person.cash_received && !person.cash_amount_changed).length}人</dd></div>
+            <div><dt>現金受取済み</dt><dd>{people.filter((person) => person.cash_received && !person.cash_amount_changed).length}人</dd></div>
             <div><dt>受取後の金額変更</dt><dd>{people.filter((person) => person.cash_amount_changed).length}人</dd></div>
             <div><dt>自動更新</dt><dd>15秒ごと</dd></div></dl>
         </article>
@@ -62,7 +63,7 @@ export default function Summary({ currentUser }) {
         </section>}
         <section className="summary-people" aria-labelledby="summary-people-heading">
           <div className="accounting-people-heading"><h2 id="summary-people-heading">参加者ごとの注文金額</h2>
-            {allGroups && <label>グループ
+            {allGroups && <label><span className="accounting-filter-label">グループ</span>
               <select value={groupFilter} onChange={(event) => setSelectedGroup(event.target.value)} disabled={busyReceiptId !== null}>
                 <option value="">すべて</option>
                 {groups.map((group) => <option key={group.name} value={group.name}>{group.name}</option>)}

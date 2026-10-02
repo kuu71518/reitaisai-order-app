@@ -443,8 +443,10 @@ export default function App() {
           <div><small>あなたの席</small><strong>{currentUser.group_id}</strong></div>
           <span>{currentUser.name}<small>さん</small></span>
         </div>
-        <VenueGuide compact />
-        {canManageOrders(currentUser) && <PushNotificationSettings key={userContextKey} currentUser={currentUser} />}
+        <div className="app-guidance">
+          <VenueGuide compact />
+          {canManageOrders(currentUser) && <PushNotificationSettings key={userContextKey} currentUser={currentUser} />}
+        </div>
         {canManageOrders(currentUser) && unreadCount > 0 && safeActiveTab !== 'manager' && (
           <StatusNotice
             tone="warning"
@@ -471,9 +473,10 @@ export default function App() {
             onClick={() => handleNavigate(item.id)}
             disabled={orderBusy}
             aria-current={safeActiveTab === item.id ? 'page' : undefined}
+            aria-label={item.id === 'manager' && unreadCount > 0 ? `${item.label}：新着${unreadCount}件` : item.label}
           >
             <span className="mobile-nav-symbol"><NavIcon name={item.id} /></span>
-            <span>{item.label}</span>
+            <span>{item.id === 'manager' ? 'まとめ' : item.label}</span>
             {item.id === 'manager' && unreadCount > 0 && <span className="mobile-nav-badge">{unreadCount}</span>}
           </button>
         ))}

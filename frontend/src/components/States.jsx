@@ -1,10 +1,16 @@
 export function ScreenIntro({ eyebrow, title, description, action }) {
   return (
     <header className="screen-intro">
-      <div>
+      <div className="screen-intro-copy">
         {eyebrow && <p className="eyebrow">{eyebrow}</p>}
-        <h1>{title}</h1>
-        {description && <p className="screen-description">{description}</p>}
+        <div className="screen-title-line">
+          <h1>{title}</h1>
+          {description && <details className="screen-description-disclosure">
+            <summary aria-label={`${title}の説明`}>説明</summary>
+            <p>{description}</p>
+          </details>}
+        </div>
+        {description && <p className="screen-description screen-description-desktop">{description}</p>}
       </div>
       {action && <div className="screen-action">{action}</div>}
     </header>

@@ -31,6 +31,7 @@ Discordの数値User ID・表示名・プロフィールはD1へ保存しませ�
 - [ログイン保持の仕様と確認方法](docs/LOGIN_SESSION.md)
 - [管理者・担当者のプッシュ通知](docs/PUSH_NOTIFICATIONS.md)
 - [2026-10-02の検証環境向け改善仕様と未確認事項](docs/STAGING_IMPROVEMENTS.md)
+- [スマートフォンの横幅・省スペース表示と検証範囲](docs/MOBILE_LAYOUT.md)
 
 既存の本番D1へ`api/migrations/0001_initial.sql`を直接適用してはいけません。本番は新しいD1へ構築して切り替える手順を採用します。`0003_discord_allowlist_and_admin_orders.sql`は旧Discord情報と全ログインsessionを削除する非互換migrationなので、既存環境へ適用する場合は受付停止・復元地点の記録・staging先行確認が必須です。
 

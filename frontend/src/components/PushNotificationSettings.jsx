@@ -118,8 +118,15 @@ export default function PushNotificationSettings({ currentUser }) {
     install: 'iPhone・iPadで通知を受け取るには', unsupported: 'このブラウザはプッシュ通知に対応していません',
     unconfigured: 'プッシュ通知は準備中です', denied: '端末の設定で通知がブロックされています', error: '通知設定を確認してください',
   };
+  const compactLabels = {
+    loading: '通知：確認中', on: '通知：オン', off: '通知：オフ', install: '通知の設定',
+    unsupported: '通知：対応外', unconfigured: '通知：準備中', denied: '通知：ブロック', error: '通知の確認',
+  };
   return <details className="push-settings">
-    <summary>{labels[status]}</summary>
+    <summary aria-label={labels[status]}>
+      <span className="push-label-full">{labels[status]}</span>
+      <span className="push-label-compact" aria-hidden="true">{compactLabels[status]}</span>
+    </summary>
     <div>
       <p>{currentUser.role === 'admin' ? '管理者には全グループの注文を通知します。' : '担当するグループの注文を通知します。'} 通知には参加者名や注文内容を表示しません。</p>
       {status === 'install' && <p>Safariの「共有」から「ホーム画面に追加」を選び、追加したアプリを開いて通知をオンにしてください（iOS・iPadOS 16.4以降）。</p>}

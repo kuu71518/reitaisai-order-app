@@ -1,0 +1,241 @@
+.app-guidance { max-width: 1040px; min-width: 0; margin-inline: auto; }
+.screen-description-disclosure, .push-label-compact { display: none; }
+.screen-intro-copy, .screen-title-line { min-width: 0; }
+.accounting-charge-note {
+  margin-bottom: 12px; border: 1px solid #e2cf8d; border-radius: 9px;
+  background: var(--gold-soft); color: var(--warning);
+}
+.accounting-charge-note > summary {
+  min-height: 44px; padding: 9px 12px; cursor: pointer; font-size: .875rem; font-weight: 700;
+}
+.accounting-charge-note > p { margin: 0; padding: 0 12px 10px; font-size: .875rem; }
+
+@media (max-width: 1023px) {
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+  /* Bound intrinsic widths of flex/grid children, including native selects. Do not clip content. */
+  .app-shell, .app-shell .main-stage, .app-shell .screen,
+  .app-shell .screen > *, .app-shell .menu-card > *, .app-shell .menu-card-controls > *,
+  .app-shell .catalog-tools > *, .app-shell .history-line-top > *,
+  .app-shell .summary-total-heading > *, .app-shell .accounting-person > *,
+  .app-shell .manager-product > summary > *, .app-shell .admin-form-grid > *,
+  .app-shell .admin-person-item > *, .app-shell .admin-menu-item > *,
+  .app-shell .admin-order-item > * { min-width: 0; max-width: 100%; }
+  .app-shell select, .app-shell input, .app-shell textarea,
+  .confirm-dialog select, .confirm-dialog input, .confirm-dialog textarea { max-width: 100%; }
+
+  .app-shell .main-stage {
+    padding: 6px max(10px, env(safe-area-inset-right, 0px)) calc(64px + env(safe-area-inset-bottom, 0px)) max(10px, env(safe-area-inset-left, 0px));
+  }
+  .app-shell .mobile-user-line { gap: 8px; margin-bottom: 4px; padding-left: 6px; font-size: .75rem; line-height: 1.35; }
+  .app-shell .mobile-user-line > div { display: block; line-height: 1.35; }
+  .app-shell .mobile-user-line > div > small { display: none; }
+  .app-shell .mobile-user-line strong { font-size: .8125rem; }
+  .app-shell .mobile-user-line > span { min-width: 0; line-height: 1.35; }
+  .app-shell .brand-lockup > div { min-width: 0; }
+
+  .app-shell .app-guidance { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; margin-bottom: 4px; }
+  .app-shell .app-guidance > details { min-width: 0; margin: 0; padding: 0; border-radius: 8px; align-self: start; }
+  .app-shell .app-guidance > details[open], .app-shell .app-guidance > details:only-child { grid-column: 1 / -1; }
+  .app-shell .app-guidance .venue-guide:not([open]) .venue-summary-copy { display: none; }
+  .app-shell .app-guidance .venue-guide > summary { min-height: 44px; padding: 8px 8px 8px 24px; font-size: .8125rem; }
+  .app-shell .app-guidance .venue-guide > summary::before { left: 8px; top: 10px; }
+  .app-shell .app-guidance .venue-toggle { margin: 0; font-size: .8125rem; }
+  .app-shell .app-guidance .venue-content { padding: 8px 10px; font-size: .875rem; }
+  .app-shell .app-guidance .push-settings > summary { min-height: 44px; padding: 10px 8px; font-size: .8125rem; line-height: 1.65; }
+  .app-shell .app-guidance .push-settings > div { padding: 0 10px 8px; }
+  .app-shell .push-label-full { display: none; }
+  .app-shell .push-label-compact { display: inline; }
+  .app-shell .push-settings p { margin: 6px 0; font-size: .875rem; line-height: 1.5; }
+  .app-shell .push-settings button { min-height: 44px; margin: 2px 4px 2px 0; }
+
+  .app-shell .screen-intro {
+    position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center; gap: 6px; margin-bottom: 4px;
+  }
+  .app-shell .screen-intro .eyebrow, .app-shell .screen-description-desktop { display: none; }
+  .app-shell .screen-title-line { display: flex; align-items: center; gap: 4px; }
+  .app-shell .screen-title-line h1 { min-width: 0; flex: 1; margin: 0; font-size: 1.125rem; line-height: 1.35; }
+  .app-shell .screen-action { width: auto; min-width: 0; }
+  .app-shell .screen-action button { width: auto; min-height: 44px; padding: 6px 8px; font-size: .75rem; }
+  .app-shell .screen-description-disclosure { display: block; flex: 0 0 44px; }
+  .app-shell .screen-description-disclosure > summary {
+    display: grid; place-items: center; min-width: 44px; min-height: 44px;
+    list-style: none; border-radius: 6px; color: var(--muted); font-size: .75rem; cursor: pointer;
+  }
+  .app-shell .screen-description-disclosure > summary::-webkit-details-marker { display: none; }
+  .app-shell .screen-description-disclosure[open] > summary { background: var(--indigo-soft); color: var(--indigo); }
+  .app-shell .screen-description-disclosure > p {
+    position: absolute; z-index: 60; top: 100%; left: 0; right: 0; margin: 0;
+    border: 1px solid var(--line-strong); border-radius: 8px; background: white;
+    padding: 10px; box-shadow: var(--shadow-small); font-size: .875rem; line-height: 1.5;
+  }
+  .app-shell .status-notice { gap: 6px; margin-bottom: 6px; padding: 6px 8px; font-size: .8125rem; line-height: 1.5; }
+  .app-shell .status-copy strong { font-size: .875rem; }
+  .app-shell .status-copy span { font-size: .8125rem; line-height: 1.5; }
+  .app-shell .status-action { min-width: 0; }
+  .app-shell .status-action button { min-height: 44px; padding: 6px 8px; font-size: .75rem; }
+
+  .app-shell .order-steps { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0 0 6px; font-size: .75rem; }
+  .app-shell .order-steps li { min-width: 0; gap: 4px; font-size: .75rem; }
+  .app-shell .order-steps li > span { width: 20px; height: 20px; font-size: .6875rem; }
+  .app-shell .menu-screen .catalog-tools {
+    position: sticky; display: grid; grid-template-columns: minmax(0, 1fr) 112px;
+    padding: 5px 6px; gap: 4px; margin-bottom: 6px;
+  }
+  .app-shell .menu-search { position: static; }
+  .app-shell .menu-search-input input { padding-left: 28px; padding-right: 8px; }
+  .app-shell .menu-search-input:has(button) input { padding-right: 48px; }
+  .app-shell .menu-search-input > span { left: 8px; }
+  .app-shell .menu-search-input button { min-width: 44px; }
+  .app-shell .menu-search-popup { left: 5px; right: 5px; }
+  .app-shell .mobile-category-select > span {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
+  .app-shell .catalog-filter-row { gap: 6px; }
+  .app-shell .mobile-category-select { gap: 6px; }
+  .app-shell .mobile-category-select > span, .app-shell .catalog-result-count { font-size: .75rem; }
+  .app-shell .menu-search-input input, .app-shell .mobile-category-select select,
+  .app-shell .menu-card select { min-height: 44px; height: 44px; font-size: 1rem; line-height: 1.25; padding-block: 7px; }
+  .app-shell .menu-grid { gap: 5px; }
+  .app-shell .menu-screen .menu-card {
+    grid-template-columns: minmax(0, 1fr) 88px; align-items: center; gap: 2px 6px; padding: 6px 8px; border-radius: 9px;
+  }
+  .app-shell .menu-screen .menu-card-copy { grid-column: 1; grid-row: 1; gap: 0; }
+  .app-shell .menu-screen .menu-card h2 { font-size: .875rem; line-height: 1.35; }
+  .app-shell .menu-card-meta { gap: 0 6px; line-height: 1.3; }
+  .app-shell .category-label, .app-shell .in-cart-label { font-size: .75rem; }
+  .app-shell .menu-screen .menu-card-controls { display: contents; }
+  .app-shell .menu-card-controls > label, .app-shell .single-price { grid-column: 1; grid-row: 2; }
+  .app-shell .menu-card-controls > label > span { display: none; }
+  .app-shell .menu-screen .single-price { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; min-height: 0; }
+  .app-shell .single-price span { font-size: .75rem; }
+  .app-shell .single-price strong { font-size: 1rem; }
+  .app-shell .menu-screen .add-cart-button {
+    grid-column: 2; grid-row: 1 / span 2; min-width: 0; width: 88px; min-height: 44px; padding: 6px; font-size: .8125rem;
+  }
+  .app-shell .add-cart-button span { margin-right: 2px; font-size: .9375rem; }
+  .app-shell .cart-dock { bottom: calc(58px + env(safe-area-inset-bottom, 0px)); padding: 6px 8px; gap: 6px; }
+  .app-shell .cart-dock > div { min-width: 0; line-height: 1.3; }
+  .app-shell .cart-dock strong { font-size: 1.125rem; }
+  .app-shell .cart-dock button { min-height: 44px; padding: 6px 10px; font-size: .8125rem; }
+
+  .app-shell .order-ticket::before { display: none; }
+  .app-shell .ticket-heading { grid-template-columns: minmax(0, 1fr); gap: 2px; padding: 6px 10px; }
+  .app-shell .ticket-heading strong { min-width: 0; font-size: .875rem; }
+  .app-shell .cart-list { padding: 0 10px; }
+  .app-shell .cart-list li { gap: 3px 8px; padding: 6px 0; }
+  .app-shell .cart-item-copy strong { font-size: .875rem; line-height: 1.35; }
+  .app-shell .cart-item-copy span { font-size: .75rem; }
+  .app-shell .cart-list .text-button { min-width: 0; min-height: 44px; padding: 6px; font-size: .75rem; }
+  .app-shell .ticket-total { padding: 6px 10px; gap: 10px; font-size: .8125rem; }
+  .app-shell .ticket-total strong { font-size: 1.25rem; }
+  .app-shell .submit-panel { bottom: calc(58px + env(safe-area-inset-bottom, 0px)); padding: 5px 6px; gap: 3px; }
+  .app-shell .submit-panel .primary-button { min-height: 44px; padding: 6px 8px; font-size: .875rem; }
+  .app-shell .submit-panel > span { font-size: .75rem; line-height: 1.4; }
+
+  .app-shell .history-totals { gap: 6px; margin-bottom: 6px; }
+  .app-shell .history-totals > div { gap: 0; padding: 6px 8px; }
+  .app-shell .history-totals strong { font-size: 1.125rem; }
+  .app-shell .history-list { gap: 5px; }
+  .app-shell .history-list > li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 2px 6px; padding: 6px 8px; }
+  .app-shell .history-line-top { grid-column: 1 / -1; gap: 6px; margin-bottom: 0; }
+  .app-shell .history-line-main { display: contents; font-size: .875rem; line-height: 1.4; }
+  .app-shell .history-line-main > div { grid-column: 1; grid-row: 2 / span 2; }
+  .app-shell .history-line-main > strong { grid-column: 2; grid-row: 2; min-width: 0; max-width: 100%; font-size: .9375rem; white-space: nowrap; text-align: right; }
+  .app-shell .history-line-top time, .app-shell .history-line-main span { font-size: .75rem; }
+  .app-shell .status-pill { min-height: 22px; padding: 2px 6px; font-size: .75rem; }
+  .app-shell .order-cancel-action { margin-top: 2px; }
+  .app-shell .order-cancel-action button { min-height: 44px; padding: 5px 8px; font-size: .75rem; }
+  .app-shell .history-list .order-cancel-action { grid-column: 2; grid-row: 3; margin-top: 0; }
+
+  .app-shell .manager-screen .manager-status-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-bottom: 6px; }
+  .app-shell .manager-screen .pending-count-card, .app-shell .manager-screen .last-update-card { min-height: 48px; padding: 4px 8px; }
+  .app-shell .manager-screen .pending-count-card strong, .app-shell .manager-screen .last-update-card strong { font-size: 1rem; }
+  .app-shell .manager-screen .last-update-card { grid-template-columns: minmax(0, 1fr) auto; gap: 0 4px; }
+  .app-shell .last-update-card > span { grid-column: 1; grid-row: 1; line-height: 1.3; }
+  .app-shell .last-update-card > strong { grid-column: 2; grid-row: 1; }
+  .app-shell .last-update-card > small { grid-column: 1 / -1; grid-row: 2; font-size: .75rem; line-height: 1.3; }
+  .app-shell .manager-screen .manager-group-filter { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: .75rem; }
+  .app-shell .manager-group-filter > span { flex-shrink: 0; }
+  .app-shell .manager-group-filter select { min-width: 0; min-height: 44px; font-size: 1rem; }
+  .app-shell .manager-screen .manager-order-section { margin-bottom: 8px; padding: 8px; }
+  .app-shell .section-heading { gap: 6px; margin-bottom: 6px; }
+  .app-shell .section-heading h2 { font-size: .9375rem; }
+  .app-shell .manager-handoff-tables { gap: 8px; }
+  .app-shell .manager-handoff-table > h3 { margin-bottom: 3px; font-size: .8125rem; }
+  .app-shell .manager-product > summary { min-height: 44px; padding: 4px 8px; gap: 6px; }
+  .app-shell .manager-product-name { font-size: .875rem; line-height: 1.35; }
+  .app-shell .manager-product-quantities { column-gap: 8px; font-size: .75rem; }
+  .app-shell .manager-product-quantities > span { white-space: normal; }
+  .app-shell .manager-product-quantities b { margin-left: 3px; font-size: .875rem; }
+  .app-shell .manager-product-details { padding: 5px 8px; }
+  .app-shell .manager-screen .complete-orders-panel { margin-top: 6px; padding: 8px; gap: 6px; }
+  .app-shell .complete-orders-panel .primary-button { min-height: 44px; padding: 6px 10px; }
+
+  .app-shell .accounting-charge-note { margin-bottom: 6px; }
+  .app-shell .accounting-charge-note > summary { padding: 10px 8px; font-size: .75rem; line-height: 1.5; }
+  .app-shell .summary-total-card { margin-bottom: 8px; border-top-width: 4px; }
+  .app-shell .summary-total-heading { flex-direction: row; align-items: center; gap: 8px; padding: 6px 8px; }
+  .app-shell .summary-total-heading span { font-size: .8125rem; }
+  .app-shell .summary-total-heading small { font-size: .75rem; line-height: 1.35; }
+  .app-shell .summary-total-heading > div { flex: 1; }
+  .app-shell .summary-total-heading > strong { flex-shrink: 0; max-width: 100%; font-size: clamp(1.125rem, 5vw, 1.375rem); line-height: 1.35; white-space: nowrap; }
+  .app-shell .summary-total-card dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .app-shell .summary-total-card dl > div { min-width: 0; align-items: center; gap: 4px; min-height: 36px; padding: 4px 6px; }
+  .app-shell .summary-total-card dl > div + div { border-top: 0; border-left: 0; }
+  .app-shell .summary-total-card dl > div:nth-child(even) { border-left: 1px solid var(--line); }
+  .app-shell .summary-total-card dl > div:nth-child(n+3) { border-top: 1px solid var(--line); }
+  .app-shell .summary-total-card dt { min-width: 0; font-size: .75rem; line-height: 1.35; }
+  .app-shell .summary-total-card dd { flex-shrink: 0; font-size: .75rem; }
+  .app-shell .accounting-groups { margin: 8px 0; padding: 8px; border-radius: 9px; }
+  .app-shell .accounting-groups h2, .app-shell .accounting-people-heading h2 { font-size: .875rem; line-height: 1.4; }
+  .app-shell .accounting-groups ul { margin-top: 4px; }
+  .app-shell .accounting-groups li { gap: 6px; padding: 4px 0; font-size: .8125rem; }
+  .app-shell .accounting-groups li > span { min-width: 0; }
+  .app-shell .accounting-groups small { margin-left: 4px; }
+  .app-shell .summary-people { padding: 6px 8px; }
+  .app-shell .accounting-people-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 6px; }
+  .app-shell .accounting-people-heading label { min-width: 0; max-width: 100%; width: 120px; gap: 4px; font-size: .75rem; }
+  .app-shell .accounting-filter-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .app-shell .accounting-people-heading select { min-width: 0; max-width: min(100%, 220px); min-height: 44px; font-size: 1rem; }
+  .app-shell .accounting-filter-total { margin: 4px 0; font-size: .75rem; }
+  .app-shell .summary-people-list .accounting-person { grid-template-columns: minmax(0, 1fr) minmax(0, 48%); gap: 2px 6px; padding: 6px 0; }
+  .app-shell .accounting-person-name { font-size: .875rem; line-height: 1.4; }
+  .app-shell .summary-person-group { margin-top: 0; font-size: .75rem; }
+  .app-shell .accounting-person-amount { gap: 0; }
+  .app-shell .accounting-person-amount strong { font-size: 1rem; line-height: 1.4; }
+  .app-shell .accounting-person-amount small { max-width: 100%; font-size: .75rem; line-height: 1.35; }
+  .app-shell .cash-receipt-action { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px 6px; padding-top: 0; }
+  .app-shell .cash-receipt-state { gap: 2px 4px; min-width: 0; font-size: .75rem; }
+  .app-shell .cash-receipt-badge { padding: 2px 5px; font-size: .75rem; }
+  .app-shell .cash-receipt-buttons { gap: 4px; margin: 0; }
+  .app-shell .cash-receipt-buttons button { min-height: 44px; padding: 6px 8px; font-size: .75rem; }
+
+  .app-shell .admin-dashboard, .app-shell .admin-overview, .app-shell .admin-section-stack { gap: 8px; }
+  .app-shell .admin-tabs { gap: 3px; padding: 3px; border-radius: 9px; }
+  .app-shell .admin-tab { min-width: 0; min-height: 44px; padding: 5px 6px; font-size: .8125rem; white-space: normal; }
+  .app-shell .admin-panel { padding: 10px; }
+  .app-shell .admin-panel-heading { gap: 4px; margin-bottom: 8px; }
+  .app-shell .admin-panel-heading h2 { font-size: 1rem; }
+  .app-shell .admin-panel-description { font-size: .8125rem; }
+  .app-shell .admin-stat-grid { gap: 6px; }
+  .app-shell .admin-stat-card { padding: 8px; }
+  .app-shell .admin-stat-card dd { margin-top: 2px; font-size: 1.125rem; }
+  .app-shell .admin-list { gap: 6px; }
+  .app-shell .admin-row-actions { gap: 4px; }
+  .app-shell .admin-person-item, .app-shell .admin-menu-item, .app-shell .admin-order-item { grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 8px; }
+  .app-shell .admin-button { min-height: 44px; padding: 6px 8px; font-size: .8125rem; }
+  .app-shell .field { min-width: 0; gap: 3px; }
+  .app-shell .field input, .app-shell .field select { min-height: 44px; padding-block: 7px; font-size: 1rem; }
+
+  .app-shell .mobile-nav { min-height: calc(52px + env(safe-area-inset-bottom, 0px)); padding: 3px 4px calc(3px + env(safe-area-inset-bottom, 0px)); grid-auto-columns: minmax(0, 1fr); }
+  .app-shell .mobile-nav-item { min-height: 44px; gap: 1px; padding: 2px; font-size: .75rem; }
+  .app-shell .toast-close { width: 44px; height: 44px; right: 0; top: -12px; }
+  .confirm-dialog { min-width: 0; padding: 14px; }
+  .confirm-dialog-actions { min-width: 0; gap: 6px; margin-top: 12px; }
+  .confirm-dialog-actions button { min-width: 0; max-width: 100%; min-height: 44px; padding: 6px 10px; }
+}
+
+@media (max-height: 480px) and (max-width: 900px) {
+  .app-shell .menu-screen .catalog-tools { position: relative; }
+}
