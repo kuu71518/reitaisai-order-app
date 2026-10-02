@@ -3,10 +3,13 @@ import useSWR from 'swr';
 import { apiFetcher, apiRequest, getErrorMessage } from '../lib/api';
 import { formatTime, formatYen, getOrderStatus, orderTotal } from '../lib/format';
 import { visibleMenuItemsForRole } from '../lib/menuVisibility';
+import { menuGroupMatchesSearch } from '../lib/menuSearch';
 import { createRequestId } from '../lib/requestId';
 import { applyOrderSubmissionResults, changeCartQuantity, wasOrderHistoryCleared } from '../lib/orderRetry';
 import { millisecondsUntilNextMinute, shouldShowLateNightNotice } from '../lib/time';
 import { EmptyState, LoadingState, ScreenIntro, StatusNotice } from './States';
+import MenuSearch from './MenuSearch';
+import OrderCancelAction from './OrderCancelAction';
 
 const EMPTY_ITEMS = [];
 const CATEGORY_PRIORITY = [
@@ -27,12 +30,14 @@ export default function Menu({ currentUser, view, onViewChange, onSubmittingChan
   const [selectedCategory, setSelectedCategory] = useState('すべて');
   const [selectedVariations, setSelectedVariations] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
   const [feedback, setFeedback] = useState(null);
   const [cartToast, setCartToast] = useState(null);
   const [showLateNightNotice, setShowLateNightNotice] = useState(() => shouldShowLateNightNotice());
   const cartToastTimer = useRef(null);
   const cartToastSequence = useRef(0);
   const submissionInFlight = useRef(false);
+  const cancellationInFlight = useRef(false);
 
   const userScope = [currentUser.id, currentUser.group_id, currentUser.role];
   const menuQuery = useSWR(['/api/menu', ...userScope], apiFetcher, {
@@ -84,7 +89,7 @@ export default function Menu({ currentUser, view, onViewChange, onSubmittingChan
     ];
   }, [menuItems]);
 
-  const groupedItems = useMemo(() => {
+  const allGroupedItems = useMemo(() => {
     const groups = new Map();
     menuItems.forEach((item) => {
       const key = `${item.category || 'その他'}::${item.name}`;
@@ -99,16 +104,18 @@ export default function Menu({ currentUser, view, onViewChange, onSubmittingChan
       groups.get(key).variations.push(item);
     });
 
-    const normalizedSearch = searchQuery.trim().toLocaleLowerCase('ja-JP');
     return [...groups.values()]
-      .filter((group) => selectedCategory === 'すべて' || group.category === selectedCategory)
-      .filter((group) => !normalizedSearch || group.name.toLocaleLowerCase('ja-JP').includes(normalizedSearch))
       .sort((left, right) => {
         if (left.name === 'キリン一番搾り（生）') return -1;
         if (right.name === 'キリン一番搾り（生）') return 1;
         return left.name.localeCompare(right.name, 'ja-JP');
       });
-  }, [menuItems, searchQuery, selectedCategory]);
+  }, [menuItems]);
+
+  const groupedItems = useMemo(() => allGroupedItems
+    .filter((group) => selectedCategory === 'すべて' || group.category === selectedCategory)
+    .filter((group) => menuGroupMatchesSearch(group, searchQuery)),
+  [allGroupedItems, searchQuery, selectedCategory]);
 
   const cartSummary = useMemo(() => ({
     units: cart.reduce((sum, item) => sum + item.quantity, 0),
@@ -242,7 +249,7 @@ export default function Menu({ currentUser, view, onViewChange, onSubmittingChan
   };
 
   const switchView = (nextView) => {
-    if (submissionInFlight.current) return;
+    if (submissionInFlight.current || cancellationInFlight.current) return;
     setFeedback(null);
     setCartToast(null);
     window.clearTimeout(cartToastTimer.current);
@@ -327,22 +334,16 @@ export default function Menu({ currentUser, view, onViewChange, onSubmittingChan
           {renderOrderSteps()}
 
           <div className="catalog-tools">
-            <div className="search-field">
-              <label className="sr-only" htmlFor="menu-search">メニューを検索</label>
-              <div>
-                <span aria-hidden="true">⌕</span>
-                <input
-                  id="menu-search"
-                  type="search"
-                  value={searchQuery}
-                  onChange={(event) => setSearchQuery(event.target.value)}
-                  placeholder="例：ビール、唐揚げ"
-                  autoComplete="off"
-                  enterKeyHint="search"
-                />
-                {searchQuery && <button type="button" onClick={() => setSearchQuery('')} aria-label="検索語を消す">消す</button>}
-              </div>
-            </div>
+            <MenuSearch
+              query={searchQuery}
+              category={selectedCategory}
+              groups={allGroupedItems}
+              onQueryChange={setSearchQuery}
+              onChoose={(suggestion) => {
+                setSelectedCategory(suggestion.category);
+                setSearchQuery(suggestion.kind === 'category' ? '' : suggestion.label);
+              }}
+            />
 
             <div className="category-strip" aria-label="カテゴリーで絞り込む">
               {categories.map((category) => (
@@ -563,6 +564,17 @@ export default function Menu({ currentUser, view, onViewChange, onSubmittingChan
                           </div>
                           <strong>{formatYen(orderTotal(order))}</strong>
                         </div>
+                        <OrderCancelAction
+                          order={order}
+                          currentUser={currentUser}
+                          disabled={isSubmitting || isCancelling}
+                          onCancelled={() => historyQuery.mutate()}
+                          onBusyChange={(busy) => {
+                            cancellationInFlight.current = busy;
+                            setIsCancelling(busy);
+                            onSubmittingChange(busy);
+                          }}
+                        />
                       </li>
                     );
                   })}

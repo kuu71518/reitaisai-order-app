@@ -66,7 +66,7 @@ function removeLegacyLocalStorage() {
 }
 
 function compactUser(user) {
-  const allowedRoles = new Set(['member', 'manager', 'admin']);
+  const allowedRoles = new Set(['member', 'manager', 'chief', 'admin']);
   if (!user || !user.id || !user.name || !user.group_id || !allowedRoles.has(user.role)) return null;
   return {
     id: user.id,
@@ -369,7 +369,7 @@ export default function App() {
   } else if (safeActiveTab === 'summary') {
     screen = <Summary key={userContextKey} currentUser={currentUser} />;
   } else if (safeActiveTab === 'admin') {
-    screen = <AdminDashboard key={userContextKey} onOrderHistoryCleared={() => {
+    screen = <AdminDashboard key={userContextKey} currentUser={currentUser} onOrderHistoryCleared={() => {
       setLatestToast(null);
       setUnreadCount(0);
       window.clearTimeout(toastTimer.current);

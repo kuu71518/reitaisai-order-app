@@ -942,7 +942,7 @@
   .catalog-tools {
     position: sticky;
     z-index: 40;
-    top: calc(64px + env(safe-area-inset-top, 0px));
+    top: env(safe-area-inset-top, 0px);
     box-shadow: 0 3px 8px rgba(38, 52, 85, 0.06);
   }
   .category-strip { display: none; }
@@ -960,7 +960,7 @@
     position: fixed;
     left: 10px;
     right: 10px;
-    bottom: calc(76px + env(safe-area-inset-bottom));
+    bottom: calc(62px + env(safe-area-inset-bottom));
     width: auto;
     margin: 0;
     transform: none;
@@ -969,7 +969,7 @@
   .cart-added-toast {
     left: 12px;
     right: 12px;
-    bottom: calc(158px + env(safe-area-inset-bottom));
+    bottom: calc(144px + env(safe-area-inset-bottom));
     width: auto;
     transform: none;
   }
@@ -1021,7 +1021,7 @@
 
   .submit-panel {
     position: fixed; z-index: 70; left: 10px; right: 10px;
-    bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+    bottom: calc(62px + env(safe-area-inset-bottom, 0px));
     margin: 0; border: 1px solid var(--line); border-radius: 14px;
     background: white; padding: 8px 10px 12px; box-shadow: var(--shadow);
   }

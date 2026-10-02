@@ -13,6 +13,17 @@ const row = (index = 0, fields = {}) => [
 ];
 const parse = (...rows) => parseExcelUsers([EXCEL_USERS_HEADERS, ...rows], GROUPS);
 
+test('Excelの主任指定をchiefとして受け取り、管理者・英語表記は引き続き拒否する', () => {
+  const chief = parse(row(0, { role: '主任' }));
+  assert.deepEqual(chief.errors, []);
+  assert.equal(chief.rows[0].role, 'chief');
+  for (const role of ['管理者', 'admin', 'chief']) {
+    const result = parse(row(0, { role }));
+    assert.deepEqual(result.rows, []);
+    assert.ok(result.errors.some((error) => error.field === 'role'));
+  }
+});
+
 test('Excelの行ごとにグループと権限を適用し、IDの文字列を変更しない', () => {
   const result = parse(row(0), row(1, { group: 'あグループ', role: '担当者' }));
   assert.deepEqual(result.errors, []);

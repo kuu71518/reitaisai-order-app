@@ -52,7 +52,7 @@ input.getRange('A1:D1').format = {
   borders: { insideVertical: { style: 'thin', color: '#FFFFFF' } },
 }
 input.getRange('D2:D101').dataValidation = {
-  rule: { type: 'list', values: ['一般参加者', '担当者'] },
+  rule: { type: 'list', values: ['一般参加者', '担当者', '主任'] },
 }
 input.getRange('C2:C101').dataValidation = {
   rule: { type: 'list', values: EVENT_GROUPS },
@@ -84,7 +84,7 @@ const instructions = [
   [11, '参加者名', 'アプリに表示する名前を入力します。'],
   [12, 'DiscordユーザーID', '半角数字16〜22桁のユーザーIDを文字列で入力します。ユーザー名や表示名では登録できません。'],
   [13, 'グループ', `セルの選択肢から「${EVENT_GROUPS.join('」または「')}」を選びます。席が決まってから入力してください。`],
-  [14, '権限', 'セルの選択肢から「一般参加者」または「担当者」を選びます。管理者はこのリストから登録できません。'],
+  [14, '権限', '「一般参加者」「担当者」「主任」から選びます。\n主任は全グループの会計を閲覧できます。管理者はこのリストから登録できません。'],
   [16, 'IDの桁落ちを防ぐ', ''],
   [17, '文字列のまま入力', 'B列は「文字列」書式に設定済みです。半角の先頭アポストロフィ（\'）に続けてIDを入力しても文字列として保持できます。'],
   [18, 'コピーするとき', 'コピー元も文字列であることを確認し、「値のみ貼り付け」でテンプレートの書式を保ちます。'],
@@ -143,7 +143,7 @@ for (const number of [1, 2]) {
       const clean = tag.replace(/\s(?:allowBlank|showInputMessage|showErrorMessage|showDropDown|errorStyle|errorTitle|error|promptTitle|prompt)="[^"]*"/g, '')
       const isGroup = tag.includes('sqref="C2:C101"')
       const title = isGroup ? 'グループ' : '権限'
-      const message = isGroup ? `${EVENT_GROUPS.join('または')}を選んでください。` : '一般参加者または担当者を選んでください。'
+      const message = isGroup ? `${EVENT_GROUPS.join('または')}を選んでください。` : '一般参加者、担当者、主任から選んでください。'
       return clean.replace('>', ` allowBlank="1" showInputMessage="1" showErrorMessage="1" showDropDown="0" errorStyle="stop" errorTitle="${title}を選択してください" error="${message}" promptTitle="${title}" prompt="${message}">`)
     })
   }

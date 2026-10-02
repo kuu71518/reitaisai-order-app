@@ -19,8 +19,8 @@ test('admin can manage every group; manager reads and changes only their own gro
 test('summary identifies same-name participants separately and includes group scope', async (t) => {
   const f = await createFixture(t); f.addOrder(); f.addOrder({ userId: 4, quantity: 2 });
   const admin = (await (await f.request(1, '/api/orders/summary')).json()).data;
-  assert.deepEqual(admin.map((row) => [row.user_id, row.group_id, row.total_price]), [[3, 'テスト席A', 300], [4, 'テスト席B', 600]]);
+  assert.deepEqual(admin.map((row) => [row.user_id, row.group_id, row.total_price]), [[2, 'テスト席A', 0], [3, 'テスト席A', 300], [5, 'テスト席B', 0], [4, 'テスト席B', 600], [1, '運営', 0]]);
   const manager = (await (await f.request(2, '/api/orders/summary')).json()).data;
-  assert.equal(manager.length, 1); assert.equal(manager[0].user_id, 3);
+  assert.deepEqual(manager.map((row) => [row.user_id, row.total_price]), [[2, 0], [3, 300]]);
   assert.equal((await f.request(3, '/api/orders/summary')).status, 403);
 });

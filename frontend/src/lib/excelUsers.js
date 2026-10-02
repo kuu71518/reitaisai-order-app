@@ -4,7 +4,7 @@ export const EXCEL_USERS_SHEET = 'メンバー追加';
 export const EXCEL_USERS_HEADERS = ['参加者名', 'DiscordユーザーID', 'グループ', '権限'];
 export const MAX_EXCEL_FILE_BYTES = 1024 * 1024;
 
-const ROLES = new Map([['一般参加者', 'member'], ['担当者', 'manager']]);
+const ROLES = new Map([['一般参加者', 'member'], ['担当者', 'manager'], ['主任', 'chief']]);
 
 export function excelUserError(line, field, message) {
   return { line, field, message: line ? `Excel ${line}行目：${message}` : message };
@@ -65,7 +65,7 @@ export function parseExcelUsers(data, groups = []) {
       errors.push(excelUserError(line, 'groupId', 'グループは画面に表示された登録可能なグループから入力してください。'));
     }
     if (!role) {
-      errors.push(excelUserError(line, 'role', '権限は「一般参加者」または「担当者」を入力してください。'));
+      errors.push(excelUserError(line, 'role', '権限は「一般参加者」「担当者」「主任」のいずれかを入力してください。'));
     }
 
     // Reuse the existing name / ID / group / role validator, retaining Excel row numbers.

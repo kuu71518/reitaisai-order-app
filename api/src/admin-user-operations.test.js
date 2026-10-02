@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { app } from './index.ts';
-import { deriveCsrfToken } from './security.js';
+import { deriveCsrfToken, sha256Base64Url } from './security.js';
 
 const origin = 'http://127.0.0.1:5173';
 const sessionToken = 'admin-user-operations-session-token-1234567890';
@@ -40,6 +40,7 @@ function createDb(state) {
   }
 
   function execute(sql, bindings) {
+    if (sql.includes('AS snapshot FROM cash_receipts')) return result(0, [{ count: 0, snapshot: '[]' }]);
     if (sql.includes("COUNT(*) AS count FROM users WHERE role != 'admin'")) {
       return result(0, [{ count: state.users.filter((user) => user.role !== 'admin').length }]);
     }
@@ -112,6 +113,7 @@ function createDb(state) {
       const changes = userCount === Number(bindings[3])
         && orderCount === Number(bindings[4])
         && otherSessionCount === Number(bindings[6])
+        && bindings[7] === '[]'
         ? 1
         : 0;
       if (changes === 1) state.oauthStates.add(bindings[0]);
@@ -493,6 +495,8 @@ test('reset preview counts deleted and preserved records separately', async () =
     other_session_count: 1,
     preserved_menu_count: 3,
     preserved_audit_count: 1,
+    cash_receipt_count: 0,
+    cash_receipt_snapshot_token: await sha256Base64Url('[]'),
   });
 });
 
@@ -510,6 +514,7 @@ test('reset refuses stale preview counts without deleting data', async () => {
       expected_user_count: 1,
       expected_order_count: 0,
       expected_other_session_count: 0,
+      expected_cash_receipt_snapshot_token: await sha256Base64Url('[]'),
     }),
   }, createEnv(state));
 
@@ -538,6 +543,7 @@ test('reset stops without deleting data when another session appears after previ
       expected_user_count: 1,
       expected_order_count: 1,
       expected_other_session_count: 1,
+      expected_cash_receipt_snapshot_token: await sha256Base64Url('[]'),
     }),
   }, createEnv(state));
 
@@ -595,6 +601,7 @@ test('reset atomically deletes event data while preserving the administrator, cu
       expected_user_count: 2,
       expected_order_count: 2,
       expected_other_session_count: 1,
+      expected_cash_receipt_snapshot_token: await sha256Base64Url('[]'),
     }),
   }, createEnv(state));
 
@@ -614,6 +621,8 @@ test('reset atomically deletes event data while preserving the administrator, cu
     deleted_user_count: 2,
     deleted_order_count: 2,
     deleted_session_count: 1,
+    deleted_cash_receipt_count: 0,
   });
-  assert.equal(state.batchCalls.at(-1).length, 8);
+  assert.equal(state.batchCalls.at(-1).length, 9);
+  assert.ok(state.batchCalls.at(-1).some((statement) => statement.sql.includes('DELETE FROM cash_receipts')));
 });

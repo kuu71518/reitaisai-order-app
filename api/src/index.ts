@@ -21,6 +21,8 @@ import {
 import type { AppEnv, AuthContext, Bindings, SessionUser, UserRole } from './types.js';
 import { clearOrderHistory, ORDER_HISTORY_CONFIRMATION, readOrderHistory } from './order-history.ts';
 import { allowedPushEndpoint, getPushConfig, notifyOrder } from './push.ts';
+import { CANCEL_SNAPSHOT_SQL, canAccessCancellation, cancelOrder, readCancellationOrder, withCancelTokens } from './order-cancellation.ts';
+import { CASH_HISTORY_SNAPSHOT_SQL, readAccounting, readCashReceipt, writeCashReceipt } from './cash-receipts.ts';
 
 // Keep this browser signed in for at most 30 days after Discord authentication.
 // Activity must not extend that deadline or refresh the administrator auth time.
@@ -62,7 +64,11 @@ type ResetPreview = {
   other_session_count: number;
   preserved_menu_count: number;
   preserved_audit_count: number;
+  cash_receipt_count: number;
+  cash_receipt_snapshot_token: string;
 };
+
+type ResetState = ResetPreview & { cash_snapshot: string };
 
 type DiscordUser = {
   id: string;
@@ -329,20 +335,26 @@ function resultNumber(result: D1Result, key: string) {
   return Number((result.results[0] as Record<string, unknown> | undefined)?.[key] || 0);
 }
 
-async function readResetPreview(env: Bindings, currentSessionId: number): Promise<ResetPreview> {
-  const [users, orders, sessions, menuItems, auditLogs] = await env.DB.batch([
+async function readResetPreview(env: Bindings, currentSessionId: number): Promise<ResetState> {
+  const [users, orders, sessions, menuItems, auditLogs, cashReceipts] = await env.DB.batch([
     env.DB.prepare("SELECT COUNT(*) AS count FROM users WHERE role != 'admin'"),
     env.DB.prepare('SELECT COUNT(*) AS count FROM orders'),
     env.DB.prepare('SELECT COUNT(*) AS count FROM auth_sessions WHERE id != ?').bind(currentSessionId),
     env.DB.prepare('SELECT COUNT(*) AS count FROM menu_items'),
     env.DB.prepare('SELECT COUNT(*) AS count FROM audit_logs'),
+    env.DB.prepare(`SELECT COUNT(*) AS count, (${CASH_HISTORY_SNAPSHOT_SQL}) AS snapshot FROM cash_receipts`),
   ]);
+  const cashSnapshot = (cashReceipts.results[0] as { snapshot?: unknown } | undefined)?.snapshot;
+  if (typeof cashSnapshot !== 'string') throw new Error('Cash receipt snapshot unavailable');
   return {
     user_count: resultNumber(users, 'count'),
     order_count: resultNumber(orders, 'count'),
     other_session_count: resultNumber(sessions, 'count'),
     preserved_menu_count: resultNumber(menuItems, 'count'),
     preserved_audit_count: resultNumber(auditLogs, 'count'),
+    cash_receipt_count: resultNumber(cashReceipts, 'count'),
+    cash_receipt_snapshot_token: await sha256Base64Url(cashSnapshot),
+    cash_snapshot: cashSnapshot,
   };
 }
 
@@ -654,18 +666,20 @@ app.get('/api/orders/mine', async (c) => {
   const { results } = await c.env.DB.prepare(`
     SELECT
       id,
+      user_id,
       menu_name_snapshot AS item_name,
       menu_size_snapshot AS size,
       unit_price_snapshot AS price,
       quantity,
       status,
       CASE WHEN order_source = 'admin' THEN 1 ELSE 0 END AS added_by_admin,
-      created_at
-    FROM orders
+      created_at,
+      ${CANCEL_SNAPSHOT_SQL} AS cancel_snapshot
+    FROM orders o
     WHERE user_id = ?
     ORDER BY created_at DESC, id DESC
   `).bind(auth.user.id).all();
-  return c.json({ success: true, data: results });
+  return c.json({ success: true, data: await withCancelTokens(results) });
 });
 
 app.get('/api/manager/orders', async (c) => {
@@ -681,11 +695,13 @@ app.get('/api/manager/orders', async (c) => {
       o.id,
       o.quantity,
       o.status,
+      o.user_id,
       CASE WHEN o.order_source = 'admin' THEN 1 ELSE 0 END AS added_by_admin,
       u.name AS user_name,
       u.group_id,
       o.menu_name_snapshot AS menu_name,
-      o.menu_size_snapshot AS size
+      o.menu_size_snapshot AS size,
+      ${CANCEL_SNAPSHOT_SQL} AS cancel_snapshot
     FROM orders o
     JOIN users u ON u.id = o.user_id
     WHERE o.status = ? ${isAdmin ? '' : 'AND u.group_id = ?'}
@@ -695,8 +711,36 @@ app.get('/api/manager/orders', async (c) => {
   const { results } = isAdmin
     ? await statement.bind(requestedStatus).all()
     : await statement.bind(requestedStatus, auth.user.group_id).all();
-  return c.json({ success: true, data: results });
+  return c.json({ success: true, data: await withCancelTokens(results) });
 });
+
+async function handleOrderCancellation(c: Context<AppEnv>) {
+  const auth = c.get('auth');
+  const orderId = parsePositiveInteger(c.req.param('id'));
+  const body = await readJsonObject(c);
+  const reason = cleanText(body?.reason, 200);
+  const token = body?.snapshot_token;
+  if (!orderId || !reason || typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token)) {
+    return fail(c, 422, '取消理由と対象注文を確認してください。');
+  }
+  const order = await readCancellationOrder(c.env, orderId);
+  if (!order || !canAccessCancellation(auth.user, order)) return fail(c, 404, '取り消せる注文が見つかりません。');
+  if (order.status === 'cancelled') return c.json({ success: true, data: { cancelled: true, duplicate: true } });
+  if (!timingSafeEqual(token, await sha256Base64Url(order.cancel_snapshot))) {
+    return fail(c, 409, '注文が更新されました。最新の内容を確認してから取り消してください。', 'ORDER_CHANGED');
+  }
+  if (order.status === 'ordered' && auth.user.role !== 'admin') {
+    return fail(c, 403, '店員へ伝えた注文の取消は、管理者へ依頼してください。');
+  }
+  if (order.status === 'ordered' && body?.restaurant_confirmed !== true) {
+    return fail(c, 422, '店への取消確認が完了してから操作してください。', 'RESTAURANT_CONFIRMATION_REQUIRED');
+  }
+  const updated = await cancelOrder(c.env, auth.user, order, reason, order.status === 'ordered');
+  if (!updated) return fail(c, 409, '注文が更新されました。最新の内容を確認してから取り消してください。', 'ORDER_CHANGED');
+  return c.json({ success: true, data: { cancelled: true, duplicate: false } });
+}
+
+app.post('/api/orders/:id/cancel', handleOrderCancellation);
 
 app.patch('/api/manager/orders/:id/quantity', async (c) => {
   const roleError = requireRole(c, ['manager', 'admin']);
@@ -760,23 +804,36 @@ app.patch('/api/manager/orders/status', async (c) => {
 });
 
 app.get('/api/orders/summary', async (c) => {
-  const roleError = requireRole(c, ['manager', 'admin']);
+  const roleError = requireRole(c, ['manager', 'chief', 'admin']);
   if (roleError) return roleError;
   const auth = c.get('auth');
-  const isAdmin = auth.user.role === 'admin';
-  const sql = `
-    SELECT u.id AS user_id, u.name, u.group_id, SUM(o.unit_price_snapshot * o.quantity) AS total_price
-    FROM orders o
-    JOIN users u ON u.id = o.user_id
-    WHERE o.status != 'cancelled' ${isAdmin ? '' : 'AND u.group_id = ?'}
-    GROUP BY u.id, u.name, u.group_id
-    ORDER BY u.group_id, u.name, u.id
-  `;
-  const statement = c.env.DB.prepare(sql);
-  const { results } = isAdmin
-    ? await statement.all()
-    : await statement.bind(auth.user.group_id).all();
-  return c.json({ success: true, data: results });
+  const allGroups = auth.user.role === 'admin' || auth.user.role === 'chief';
+  return c.json({ success: true, data: await readAccounting(c.env, allGroups ? undefined : auth.user.group_id) });
+});
+
+app.post('/api/accounting/users/:id/cash-receipt', async (c) => {
+  const roleError = requireRole(c, ['chief', 'admin']);
+  if (roleError) return roleError;
+  const auth = c.get('auth');
+  const userId = parsePositiveInteger(c.req.param('id'));
+  const body = await readJsonObject(c);
+  const token = body?.snapshot_token;
+  if (!userId || typeof body?.received !== 'boolean'
+    || typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token)) {
+    return fail(c, 422, '参加者と現金受領の確認内容を確認してください。');
+  }
+  const expected = await readCashReceipt(c.env, userId);
+  if (!expected) return fail(c, 404, '会計対象の参加者が見つかりません。');
+  if (expected.last_actor_user_id === auth.user.id && expected.last_request_token === token
+    && (expected.cash_received === 1) === body.received) {
+    return c.json({ success: true, data: { received: body.received, duplicate: true } });
+  }
+  if (!timingSafeEqual(token, await sha256Base64Url(expected.cash_snapshot))) {
+    return fail(c, 409, '会計または受領状況が更新されました。最新の内容を確認してください。', 'CASH_RECEIPT_CHANGED');
+  }
+  const updated = await writeCashReceipt(c.env, auth.user.id, expected, body.received, token);
+  if (!updated) return fail(c, 409, '会計または受領状況が更新されました。最新の内容を確認してください。', 'CASH_RECEIPT_CHANGED');
+  return c.json({ success: true, data: { received: body.received, duplicate: false } });
 });
 
 app.get('/api/admin/stats', async (c) => {
@@ -841,7 +898,7 @@ app.get('/api/admin/data-reset/preview', async (c) => {
   if (roleError) return roleError;
   const auth = c.get('auth');
   try {
-    const preview = await readResetPreview(c.env, auth.sessionId);
+    const { cash_snapshot: _cashSnapshot, ...preview } = await readResetPreview(c.env, auth.sessionId);
     return c.json({ success: true, data: preview });
   } catch {
     return fail(c, 500, 'リセット対象を確認できませんでした。');
@@ -866,11 +923,15 @@ app.post('/api/admin/data-reset', async (c) => {
   const expectedUserCount = parseNonNegativeInteger(body.expected_user_count);
   const expectedOrderCount = parseNonNegativeInteger(body.expected_order_count);
   const expectedOtherSessionCount = parseNonNegativeInteger(body.expected_other_session_count);
+  const expectedCashReceiptToken = body.expected_cash_receipt_snapshot_token;
   if (expectedUserCount === null || expectedOrderCount === null || expectedOtherSessionCount === null) {
     return fail(c, 422, 'リセット対象の件数を再確認してください。', 'RESET_COUNTS_INVALID');
   }
+  if (typeof expectedCashReceiptToken !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(expectedCashReceiptToken)) {
+    return fail(c, 422, '現金受領記録の削除対象を再確認してください。', 'RESET_CASH_SNAPSHOT_INVALID');
+  }
 
-  let preview: ResetPreview;
+  let preview: ResetState;
   try {
     preview = await readResetPreview(c.env, auth.sessionId);
   } catch {
@@ -878,7 +939,8 @@ app.post('/api/admin/data-reset', async (c) => {
   }
   if (preview.user_count !== expectedUserCount
     || preview.order_count !== expectedOrderCount
-    || preview.other_session_count !== expectedOtherSessionCount) {
+    || preview.other_session_count !== expectedOtherSessionCount
+    || !timingSafeEqual(preview.cash_receipt_snapshot_token, expectedCashReceiptToken)) {
     return fail(c, 409, 'リセット対象が変更されました。内容を再確認してください。', 'RESET_PREVIEW_STALE');
   }
 
@@ -888,6 +950,7 @@ app.post('/api/admin/data-reset', async (c) => {
     deleted_user_count: expectedUserCount,
     deleted_order_count: expectedOrderCount,
     deleted_session_count: expectedOtherSessionCount,
+    deleted_cash_receipt_count: preview.cash_receipt_count,
   });
   try {
     const results = await c.env.DB.batch([
@@ -897,6 +960,7 @@ app.post('/api/admin/data-reset', async (c) => {
         WHERE (SELECT COUNT(*) FROM users WHERE role != 'admin') = ?
           AND (SELECT COUNT(*) FROM orders) = ?
           AND (SELECT COUNT(*) FROM auth_sessions WHERE id != ?) = ?
+          AND (${CASH_HISTORY_SNAPSHOT_SQL}) = ?
       `).bind(
         guardHash,
         now,
@@ -905,6 +969,7 @@ app.post('/api/admin/data-reset', async (c) => {
         expectedOrderCount,
         auth.sessionId,
         expectedOtherSessionCount,
+        preview.cash_snapshot,
       ),
       c.env.DB.prepare(`
         SELECT CASE WHEN EXISTS (
@@ -913,6 +978,12 @@ app.post('/api/admin/data-reset', async (c) => {
       `).bind(guardHash),
       c.env.DB.prepare(`
         DELETE FROM orders
+        WHERE EXISTS (
+          SELECT 1 FROM oauth_states WHERE state_hash = ? AND used_at IS NULL
+        )
+      `).bind(guardHash),
+      c.env.DB.prepare(`
+        DELETE FROM cash_receipts
         WHERE EXISTS (
           SELECT 1 FROM oauth_states WHERE state_hash = ? AND used_at IS NULL
         )
@@ -989,12 +1060,13 @@ app.get('/api/admin/orders', async (c) => {
       o.status,
       CASE WHEN o.order_source = 'admin' THEN 1 ELSE 0 END AS added_by_admin,
       o.created_at,
-      u.group_id
+      u.group_id,
+      ${CANCEL_SNAPSHOT_SQL} AS cancel_snapshot
     FROM orders o
     JOIN users u ON u.id = o.user_id
     ORDER BY o.created_at DESC, o.id DESC
   `).all();
-  return c.json({ success: true, data: results });
+  return c.json({ success: true, data: await withCancelTokens(results) });
 });
 
 app.post('/api/admin/users/:id/orders', async (c) => {
@@ -1072,25 +1144,7 @@ app.post('/api/admin/users/:id/orders', async (c) => {
 app.post('/api/admin/orders/:id/cancel', async (c) => {
   const roleError = requireRole(c, ['admin']);
   if (roleError) return roleError;
-  const auth = c.get('auth');
-  const orderId = parsePositiveInteger(c.req.param('id'));
-  if (!orderId) return fail(c, 422, '注文番号を確認してください。');
-
-  const now = nowSeconds();
-  const result = await c.env.DB.prepare(`
-    UPDATE orders
-    SET status = 'cancelled', cancelled_at = ?, cancelled_by = ?,
-        cancel_reason = '管理者による事前追加の訂正', updated_at = ?
-    WHERE id = ? AND order_source = 'admin' AND status != 'cancelled'
-  `).bind(now, auth.user.id, now, orderId).run();
-  if (result.meta.changes !== 1) {
-    return fail(c, 404, '訂正できる管理者追加注文が見つかりません。');
-  }
-
-  await audit(c.env, auth.user.id, 'ADMIN_ORDER_CANCEL', 'order', orderId, {
-    reason: 'admin_added_order_correction',
-  });
-  return c.json({ success: true });
+  return handleOrderCancellation(c);
 });
 
 app.post('/api/admin/users/:id/discord-access/revoke', async (c) => {
@@ -1272,7 +1326,7 @@ app.post('/api/admin/users/bulk', async (c) => {
   const roleCounts = users.reduce((counts, user) => {
     counts[user.role] += 1;
     return counts;
-  }, { member: 0, manager: 0 });
+  }, { member: 0, manager: 0, chief: 0 });
   const metadata = JSON.stringify({
     created_count: users.length,
     role_counts: roleCounts,

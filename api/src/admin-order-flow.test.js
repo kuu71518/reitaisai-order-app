@@ -49,11 +49,6 @@ function createAdminDb(state) {
             state.orderSource = 'admin';
             return { meta: { changes: 1, last_row_id: 77 } };
           }
-          if (sql.includes('UPDATE orders') && sql.includes("order_source = 'admin'")) {
-            const changes = state.orderSource === 'admin' ? 1 : 0;
-            if (changes === 1) state.orderStatus = 'cancelled';
-            return { meta: { changes } };
-          }
           if (sql.includes('SET discord_id_hmac = NULL')) {
             state.allowlistCleared = true;
             return { meta: { changes: 1 } };
@@ -111,14 +106,14 @@ test('an administrator-added banquet order is immediately ordered with provenanc
   assert.match(state.orderInsert.sql, /'admin'/u);
 });
 
-test('the correction endpoint refuses a self-created order', async () => {
+test('the legacy correction endpoint refuses cancellation without the new reason and snapshot confirmation', async () => {
   const state = { orderSource: 'self' };
   const response = await app.request('/api/admin/orders/77/cancel', {
     method: 'POST',
     headers: await adminHeaders(),
   }, createEnv(state));
 
-  assert.equal(response.status, 404);
+  assert.equal(response.status, 422);
   assert.notEqual(state.orderStatus, 'cancelled');
 });
 

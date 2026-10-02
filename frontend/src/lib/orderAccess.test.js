@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canManageOrders, collectOrderNotifications, getNavItems, groupPendingOrders } from './orderAccess.js';
+import { canManageOrders, canViewAccounting, canViewAllAccounting, collectOrderNotifications, getNavItems, groupPendingOrders } from './orderAccess.js';
 
 test('admin gets manager navigation and polling eligibility plus the admin screen', () => {
   assert.equal(canManageOrders({ role: 'admin' }), true);
@@ -10,6 +10,21 @@ test('admin gets manager navigation and polling eligibility plus the admin scree
   for (const user of [null, { role: 'member' }, { role: 'unknown' }]) {
     assert.equal(canManageOrders(user), false);
     assert.deepEqual(getNavItems(user).map((item) => item.id), ['menu', 'history']);
+  }
+});
+test('chief can view all accounting without manager actions, notifications, or admin navigation', () => {
+  const chief = { role: 'chief' };
+  assert.equal(canManageOrders(chief), false);
+  assert.equal(canViewAccounting(chief), true);
+  assert.equal(canViewAllAccounting(chief), true);
+  assert.deepEqual(getNavItems(chief).map((item) => item.id), ['menu', 'history', 'summary']);
+  assert.equal(canViewAccounting({ role: 'manager' }), true);
+  assert.equal(canViewAllAccounting({ role: 'manager' }), false);
+  assert.equal(canViewAccounting({ role: 'admin' }), true);
+  assert.equal(canViewAllAccounting({ role: 'admin' }), true);
+  for (const user of [null, { role: 'member' }, { role: 'unknown' }]) {
+    assert.equal(canViewAccounting(user), false);
+    assert.equal(canViewAllAccounting(user), false);
   }
 });
 test('new-order notifications ignore the initial baseline and repeated polls but count newly arrived orders once', () => {

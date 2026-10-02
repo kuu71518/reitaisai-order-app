@@ -1,6 +1,6 @@
 const encoder = new TextEncoder();
 
-export const USER_ROLES = Object.freeze(['member', 'manager', 'admin']);
+export const USER_ROLES = Object.freeze(['member', 'manager', 'chief', 'admin']);
 export const ORDER_STATUSES = Object.freeze(['pending', 'ordered', 'cancelled']);
 
 function bytesToBase64Url(bytes) {
@@ -105,7 +105,7 @@ export function isUserRole(value) {
 }
 
 export function isAssignableUserRole(value) {
-  return value === 'member' || value === 'manager';
+  return value === 'member' || value === 'manager' || value === 'chief';
 }
 
 export function isOrderStatus(value) {

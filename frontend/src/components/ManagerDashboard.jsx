@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react';
 import { apiRequest, getErrorMessage } from '../lib/api';
 import { formatTime } from '../lib/format';
-import { groupPendingOrders } from '../lib/orderAccess';
+import { groupOrdersForHandoff } from '../lib/managerOrderGroups';
 import { EmptyState, LoadingState, ScreenIntro, StatusNotice } from './States';
 import ConfirmDialog from './ConfirmDialog';
+import OrderCancelAction from './OrderCancelAction';
+import '../styles/manager-compact.css';
 
 export default function ManagerDashboard({
   currentUser,
@@ -17,6 +19,7 @@ export default function ManagerDashboard({
   const [quantityDrafts, setQuantityDrafts] = useState({});
   const [busyOrderId, setBusyOrderId] = useState(null);
   const [isCompleting, setIsCompleting] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
   const [feedback, setFeedback] = useState(null);
   const [ordersToComplete, setOrdersToComplete] = useState(null);
   const [selectedGroup, setSelectedGroup] = useState('');
@@ -26,7 +29,7 @@ export default function ManagerDashboard({
     isAdmin && selectedGroup ? orders.filter((order) => order.group_id === selectedGroup) : orders
   ), [isAdmin, orders, selectedGroup]);
 
-  const groupedOrders = useMemo(() => groupPendingOrders(visibleOrders, quantityDrafts), [visibleOrders, quantityDrafts]);
+  const groupedTables = useMemo(() => groupOrdersForHandoff(visibleOrders, quantityDrafts), [visibleOrders, quantityDrafts]);
 
   const hasUnsavedQuantityDrafts = useMemo(() => orders.some((order) => (
     Object.prototype.hasOwnProperty.call(quantityDrafts, order.id)
@@ -47,7 +50,7 @@ export default function ManagerDashboard({
   };
 
   const saveQuantity = async (order) => {
-    if (busyOrderId !== null || isCompleting) return;
+    if (busyOrderId !== null || isCompleting || isCancelling) return;
     const quantity = Number(quantityDrafts[order.id] ?? order.quantity);
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > 20) {
       showFeedback('danger', '個数を保存できません', '個数は1～20の整数にしてください。');
@@ -75,7 +78,7 @@ export default function ManagerDashboard({
   };
 
   const markAllAsOrdered = async () => {
-    if (!ordersToComplete?.length || isCompleting || hasUnsavedQuantityDrafts) return;
+    if (!ordersToComplete?.length || isCompleting || isCancelling || busyOrderId !== null || hasUnsavedQuantityDrafts) return;
     // Only update the orders shown when confirmation was opened. New arrivals
     // during the dialog remain pending for the next handoff to the restaurant.
     const orderIds = ordersToComplete;
@@ -119,7 +122,7 @@ export default function ManagerDashboard({
       {isAdmin && (
         <label className="manager-group-filter">
           <span>取りまとめるグループ</span>
-          <select value={selectedGroup} onChange={(event) => setSelectedGroup(event.target.value)} disabled={isCompleting || busyOrderId !== null}>
+          <select value={selectedGroup} onChange={(event) => setSelectedGroup(event.target.value)} disabled={isCompleting || isCancelling || busyOrderId !== null}>
             <option value="">すべてのグループ</option>
             {[...new Set([...groupOptions, ...(selectedGroup ? [selectedGroup] : [])])].map((group) => <option key={group} value={group}>{group}</option>)}
           </select>
@@ -177,46 +180,80 @@ export default function ManagerDashboard({
             description="この画面は5秒ごとに自動更新されます。"
           />
         ) : (
-          <div className="manager-order-groups">
-            {groupedOrders.map((group) => (
-              <article key={group.key} className="manager-order-group">
-                <header>
-                  <div>
-                    {isAdmin && <span>{group.groupId}</span>}
-                    <h3>{group.menuName}</h3>
-                    <span>{group.size}</span>
-                  </div>
-                  <strong>合計 {group.total}個</strong>
-                </header>
-                <ul>
-                  {group.items.map((order) => {
-                    const quantity = Number(quantityDrafts[order.id] ?? order.quantity);
-                    const changed = quantity !== Number(order.quantity);
-                    const isSaving = busyOrderId === order.id;
-                    const controlsBusy = busyOrderId !== null || isCompleting;
-                    return (
-                      <li key={order.id}>
-                        <strong className="order-person">{order.user_name}</strong>
-                        <div className="quantity-control" aria-label={`${order.user_name}の個数`}>
-                          <button type="button" onClick={() => changeQuantityDraft(order, -1)} aria-label={`${order.user_name}さんの${order.menu_name}を1つ減らす`} disabled={controlsBusy}>−</button>
-                          <output>{quantity}</output>
-                          <button type="button" onClick={() => changeQuantityDraft(order, 1)} aria-label={`${order.user_name}さんの${order.menu_name}を1つ増やす`} disabled={controlsBusy}>＋</button>
-                        </div>
-                        {changed ? (
-                          <button
-                            type="button"
-                            className="save-line-button"
-                            disabled={controlsBusy}
-                            onClick={() => saveQuantity(order)}
-                          >
-                            {isSaving ? '保存中…' : '個数を保存'}
-                          </button>
-                        ) : <span className="saved-label">保存済み</span>}
-                      </li>
-                    );
-                  })}
-                </ul>
-              </article>
+          <div className="manager-handoff-tables">
+            {groupedTables.map((table) => (
+              <section key={table.key} className="manager-handoff-table" aria-label={`${table.groupId}の注文`}>
+                {isAdmin && <h3>{table.groupId}</h3>}
+                <div className="manager-handoff-products">
+                  {table.products.map((product) => (
+                    <details key={product.key} className="manager-product">
+                      <summary>
+                        <span className="manager-product-summary">
+                          <strong className="manager-product-name">{product.menuName}</strong>
+                          <span className="manager-product-quantities">
+                            {product.variants.map((variant) => (
+                              <span key={variant.key}>{variant.size}<b>{variant.total}個</b></span>
+                            ))}
+                            {product.hasDraft && <span className="manager-product-unsaved">未保存の変更あり</span>}
+                          </span>
+                        </span>
+                        <span className="manager-product-toggle">内訳<span className="sr-only">と個数変更</span></span>
+                      </summary>
+                      <div className="manager-product-details">
+                        <p>個数の変更は注文ごとに保存します。</p>
+                        {product.variants.map((variant) => (
+                          <section key={variant.key} className="manager-variant-detail" aria-label={`${product.menuName} ${variant.size}の内訳`}>
+                            <h4>{variant.size}・合計{variant.total}個</h4>
+                            <ul className="manager-person-list">
+                              {variant.people.map((person) => (
+                                <li key={person.key}>
+                                  <div className="manager-person-heading">
+                                    <strong>{person.name}</strong>
+                                    <span>合計{person.total}個{person.orders.length > 1 && `（${person.orders.length}件の注文）`}</span>
+                                  </div>
+                                  <ul className="manager-order-edit-list">
+                                    {person.orders.map((order, index) => {
+                                      const quantity = Number(quantityDrafts[order.id] ?? order.quantity);
+                                      const changed = quantity !== Number(order.quantity);
+                                      const isSaving = busyOrderId === order.id;
+                                      const controlsBusy = busyOrderId !== null || isCompleting || isCancelling;
+                                      const orderLabel = `${order.user_name}さんの${order.menu_name} ${order.size}${person.orders.length > 1 ? ` ${index + 1}件目` : ''}`;
+                                      return (
+                                        <li key={order.id} className="manager-order-edit-row">
+                                          {person.orders.length > 1 && <small>{index + 1}件目{order.created_at && `・${formatTime(order.created_at)}`}</small>}
+                                          <div className="quantity-control" aria-label={`${orderLabel}の個数`}>
+                                            <button type="button" onClick={() => changeQuantityDraft(order, -1)} aria-label={`${orderLabel}を1つ減らす`} disabled={controlsBusy || quantity <= 1}>−</button>
+                                            <output>{quantity}</output>
+                                            <button type="button" onClick={() => changeQuantityDraft(order, 1)} aria-label={`${orderLabel}を1つ増やす`} disabled={controlsBusy || quantity >= 20}>＋</button>
+                                          </div>
+                                          {changed ? (
+                                            <button type="button" className="save-line-button" disabled={controlsBusy} onClick={() => saveQuantity(order)} aria-label={`${orderLabel}の個数を保存`}>
+                                              {isSaving ? '保存中…' : '個数を保存'}
+                                            </button>
+                                          ) : <span className="saved-label">保存済み</span>}
+                                          <OrderCancelAction order={order} currentUser={currentUser} disabled={controlsBusy}
+                                            onBusyChange={setIsCancelling} onCancelled={async () => {
+                                              setQuantityDrafts((drafts) => {
+                                                const next = { ...drafts };
+                                                delete next[order.id];
+                                                return next;
+                                              });
+                                              await refreshOrders();
+                                            }} />
+                                        </li>
+                                      );
+                                    })}
+                                  </ul>
+                                </li>
+                              ))}
+                            </ul>
+                          </section>
+                        ))}
+                      </div>
+                    </details>
+                  ))}
+                </div>
+              </section>
             ))}
           </div>
         )}
@@ -236,7 +273,7 @@ export default function ManagerDashboard({
               type="button"
               className="primary-button"
               onClick={() => setOrdersToComplete(visibleOrders.map((order) => order.id))}
-              disabled={isCompleting || busyOrderId !== null || hasUnsavedQuantityDrafts}
+              disabled={isCompleting || isCancelling || busyOrderId !== null || hasUnsavedQuantityDrafts}
               aria-describedby={hasUnsavedQuantityDrafts ? 'complete-orders-disabled-reason' : undefined}
             >
               {isCompleting ? '変更しています…' : `${visibleOrders.length}件を伝達済みにする`}
@@ -250,7 +287,8 @@ export default function ManagerDashboard({
         <summary>困ったとき・注文の訂正</summary>
         <div>
           <p>注文一覧は5秒ごとに更新されます。通信エラーが出た場合は「今すぐ更新」で確認してください。</p>
-          <p>注文の取消や参加者の変更は、管理者へ直接伝えてください。</p>
+          <p>商品を開くと、注文者ごとの内訳と個数の変更ボタンが表示されます。同じ方の注文が複数ある場合も、個数は1件ずつ保存します。</p>
+          <p>伝達前の注文は、商品を開いて「取り消す」から取消できます。店員へ伝えた後の訂正や参加者の変更は、管理者へ直接伝えてください。</p>
         </div>
       </details>
       <ConfirmDialog open={Boolean(ordersToComplete)} title="店員へ伝え終わりましたか？"

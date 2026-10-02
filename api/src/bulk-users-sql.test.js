@@ -121,7 +121,7 @@ for (const count of [2, 100]) {
     const managerCount = users.filter((user) => user.role === 'manager').length;
     assert.deepEqual(JSON.parse(audits[0].metadata_json), {
       created_count: count,
-      role_counts: { member: count - managerCount, manager: managerCount },
+      role_counts: { member: count - managerCount, manager: managerCount, chief: 0 },
       group_count: Math.min(count, 5),
     });
     const savedData = JSON.stringify([...participants, ...audits]);

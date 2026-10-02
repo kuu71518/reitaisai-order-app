@@ -1,0 +1,8 @@
+.order-cancel-action { min-width: 0; }
+.cancel-order-button { min-height: 44px; color: var(--torii-dark); font-size: .8rem; }
+.cancel-reason { display: grid; gap: 6px; font-weight: 700; }
+.cancel-reason textarea { width: 100%; min-height: 88px; resize: vertical; padding: 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: white; color: var(--ink); font: inherit; }
+.cancel-restaurant-check { display: flex; align-items: flex-start; gap: 10px; padding: 12px; border: 1px solid #b96b28; border-radius: 8px; background: #fff7e7; font-weight: 700; }
+.cancel-restaurant-check input { flex-shrink: 0; width: 24px; height: 24px; margin: 2px 0 0; }
+.cancel-status-note { color: var(--muted); font-size: .875rem; }
+.order-cancel-action .inline-error { overflow-wrap: anywhere; }

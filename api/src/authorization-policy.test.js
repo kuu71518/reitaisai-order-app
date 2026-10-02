@@ -55,9 +55,6 @@ function createDb(role) {
           return { results: [] };
         },
         async run() {
-          if (sql.includes('UPDATE orders') && !sql.includes("order_source = 'admin'")) {
-            return { meta: { changes: 0 } };
-          }
           return { meta: { changes: 1 } };
         },
       };
@@ -133,14 +130,13 @@ test('a member cannot add an order to another user', async () => {
   assert.equal(response.status, 403);
 });
 
-test('an administrator can cancel only an administrator-added order', async () => {
+test('the legacy administrator cancellation endpoint remains restricted to administrators', async () => {
   const csrfToken = await deriveCsrfToken(sessionToken);
-  const response = await app.request('/api/admin/orders/42/cancel', {
-    method: 'POST',
-    headers: sessionHeaders({
-      Origin: origin,
-      'X-CSRF-Token': csrfToken,
-    }),
-  }, envForRole('admin'));
-  assert.equal(response.status, 200);
+  for (const role of ['member', 'manager', 'chief']) {
+    const response = await app.request('/api/admin/orders/42/cancel', {
+      method: 'POST',
+      headers: sessionHeaders({ Origin: origin, 'X-CSRF-Token': csrfToken }),
+    }, envForRole(role));
+    assert.equal(response.status, 403, role);
+  }
 });

@@ -61,6 +61,18 @@ test('共通グループと権限も送信前に再検証する', () => {
   assert.match(adminRole.errors[0].message, /一般参加者.*担当者/);
 });
 
+test('主任を共通権限として追加できるが管理者と未知の権限は拒否する', () => {
+  const base = { names: 'テスト主任', discordUserIds: '800000000000000001', groupId: 'Aグループ' };
+  const chief = parseBulkUsers({ ...base, role: 'chief' });
+  assert.deepEqual(chief.errors, []);
+  assert.equal(chief.rows[0].role, 'chief');
+  for (const role of ['admin', 'owner', '']) {
+    const result = parseBulkUsers({ ...base, role });
+    assert.deepEqual(result.rows, []);
+    assert.ok(result.errors.some((error) => error.field === 'role'));
+  }
+});
+
 test('不正な名前・表貼り付け・IDは何人目かを示し、ID全文をエラーに含めない', () => {
   const secretId = '123456789012345';
   const result = parseBulkUsers({

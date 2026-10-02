@@ -2,14 +2,23 @@ export function canManageOrders(user) {
   return user?.role === 'manager' || user?.role === 'admin';
 }
 
+export function canViewAccounting(user) {
+  return canManageOrders(user) || user?.role === 'chief';
+}
+
+export function canViewAllAccounting(user) {
+  return user?.role === 'chief' || user?.role === 'admin';
+}
+
 export function getNavItems(user) {
   const items = [
     { id: 'menu', label: 'メニュー' },
     { id: 'history', label: '注文履歴' },
   ];
   if (canManageOrders(user)) {
-    items.push({ id: 'manager', label: '取りまとめ' }, { id: 'summary', label: '会計' });
+    items.push({ id: 'manager', label: '取りまとめ' });
   }
+  if (canViewAccounting(user)) items.push({ id: 'summary', label: '会計' });
   if (user?.role === 'admin') items.push({ id: 'admin', label: '管理' });
   return items;
 }

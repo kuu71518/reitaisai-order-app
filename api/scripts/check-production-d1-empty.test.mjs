@@ -26,8 +26,9 @@ function expectCode(callback, code) {
   );
 }
 
-test('query checks the application tables including notifications and cleared requests', () => {
-  assert.equal(BOOTSTRAP_BLOCKING_TABLES.length, 10);
+test('query checks the application tables including cash receipts, notifications and cleared requests', () => {
+  assert.equal(BOOTSTRAP_BLOCKING_TABLES.length, 11);
+  assert.ok(BOOTSTRAP_BLOCKING_TABLES.includes('cash_receipts'));
   assert.ok(BOOTSTRAP_BLOCKING_TABLES.includes('push_subscriptions'));
   assert.ok(BOOTSTRAP_BLOCKING_TABLES.includes('cleared_order_requests'));
   assert.ok(BOOTSTRAP_BLOCKING_TABLES.includes('d1_migrations'));

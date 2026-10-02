@@ -1,0 +1,13 @@
+.cash-receipt-action { grid-column: 1 / -1; min-width: 0; padding-top: 4px; }
+.cash-receipt-state { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.cash-receipt-state small { color: var(--muted); font-size: .75rem; }
+.cash-receipt-badge { display: inline-flex; border-radius: 5px; padding: 3px 7px; font-size: .8rem; font-weight: 700; }
+.cash-receipt-badge.is-received { color: var(--success); background: var(--success-soft); }
+.cash-receipt-badge.is-unreceived { color: var(--muted); background: #edf0f5; }
+.cash-receipt-changed { color: var(--warning); font-size: .8rem; }
+.cash-receipt-buttons { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 4px; }
+.cash-receipt-buttons button { min-height: 44px; padding: 8px 10px; font-size: .8rem; }
+.cash-receipt-buttons .text-button { color: var(--torii-dark); }
+.cash-receipt-current-total strong { font-size: 1.2rem; }
+.cash-receipt-charge-note { padding: 10px; background: var(--gold-soft); border-radius: 7px; color: var(--warning); font-size: .875rem; }
+.cash-receipt-action .inline-error { overflow-wrap: anywhere; }

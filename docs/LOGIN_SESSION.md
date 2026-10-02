@@ -1,6 +1,6 @@
 # 初回認証後のログイン保持
 
-更新日: 2026-09-14（JST）
+更新日: 2026-10-02（JST）
 
 ## 利用者の操作
 
@@ -12,6 +12,12 @@
 30日は認証した時点からの固定期限です。利用し続けても延びません。期限切れ、ログアウト、Cookieの削除、別ブラウザ、プライベートブラウジング終了後などは再ログインが必要です。ブラウザ側の保存制限によっては、30日より前に再ログインが必要になることがあります。共用端末では、利用後にログアウトしてください。
 
 この変更より前に発行されたログイン情報を自動的に30日へ延長することはありません。従来の期限（最長12時間）が切れたあとに1回Discordログインすると、その回から30日保持になります。
+
+## スマートフォンのDiscordアプリとの関係
+
+現在のログインは、Discordの標準OAuth2の認可画面をHTTPSで開き、このアプリのcallbackへ戻る方式です。端末に入っているDiscordアプリへ必ず切り替えて認証する専用処理は実装していません。ネイティブアプリへの切替と同じブラウザへの復帰は、iPhone・Android実機で未確認です。ブラウザ内での認証方法を維持し、Discordのログイン状態を別のアプリ・ブラウザと自動共有すると説明しません。[Discord OAuth2公式資料](https://docs.discord.com/developers/topics/oauth2)（2026-10-02確認）。
+
+利用者にはSafari・Chrome等の同じブラウザで開くこと、初回だけDiscordで確認し、その後は同じブラウザで最長30日保持することを案内します。主任も同じ認証方式を使い、各APIは現在の役割で権限を判定します。
 
 ## 保持する情報と失効
 
@@ -25,7 +31,7 @@
 
 Cookieの保持は[MDNのCookie属性](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie)、初回本人確認は[Discord OAuth2](https://docs.discord.com/developers/topics/oauth2)に従います。どちらも2026-09-14確認。
 
-## 検証範囲
+## 2026-09-14の検証範囲
 
 `api/src/auth-session.test.js` はリポジトリのmigrationをメモリSQLiteに適用し、アプリの実SQLを実行して確認します。実データ・既存DB・リモートD1には接続しません。
 
@@ -42,3 +48,5 @@ Cookieの保持は[MDNのCookie属性](https://developer.mozilla.org/en-US/docs/
 実行環境はNode.js 24.19.0です。指定された22.17.xでの再検証と実機Excelの開閉は未実施です。ビルド時には既存のPWAプラグインに由来する`inlineDynamicImports`の非推奨警告が残っています。ブラウザ試験はAPIのMock検証であり、Discord実認証や実D1接続の証明ではありません。
 
 公開前はstagingで、iPhone SafariとAndroid Chromeの同じブラウザを閉じて再度開く操作、Discord実認証、ログアウト・利用停止を確認してください。公開は別途承認後です。今回のローカル実装にDB migrationやリモート設定変更はありません。
+
+上記は2026-09-14のログイン保持変更の記録です。2026-10-02の主任追加には役割制約のmigrationがありますが、既存sessionとログイン許可を保持します。今回の実施結果は[検証環境向け改善仕様](STAGING_IMPROVEMENTS.md)と対応するrelease記録を参照してください。

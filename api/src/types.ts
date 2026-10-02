@@ -1,4 +1,4 @@
-export type UserRole = 'member' | 'manager' | 'admin';
+export type UserRole = 'member' | 'manager' | 'chief' | 'admin';
 
 export type Bindings = {
   DB: D1Database;

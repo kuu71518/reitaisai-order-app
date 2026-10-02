@@ -1,6 +1,6 @@
 export const MAX_BULK_USERS = 100;
 
-const ASSIGNABLE_ROLES = new Set(['member', 'manager']);
+const ASSIGNABLE_ROLES = new Set(['member', 'manager', 'chief']);
 
 function generalError(field, message) {
   return { field, line: 0, message };
@@ -85,7 +85,7 @@ export function parseBulkUsers({ names = '', discordUserIds = '', groupId = '', 
     errors.push(generalError('groupId', '全員のグループを選んでください。'));
   }
   if (!ASSIGNABLE_ROLES.has(normalizedRole)) {
-    errors.push(generalError('role', '全員の権限は「一般参加者」または「担当者」から選んでください。'));
+    errors.push(generalError('role', '全員の権限は「一般参加者」「担当者」「主任」から選んでください。'));
   }
 
   nameLines.forEach((name, index) => {

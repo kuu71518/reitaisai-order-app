@@ -14,6 +14,7 @@ const FIELD_LABELS = {
 const ROLE_OPTIONS = [
   { value: 'member', label: '一般参加者' },
   { value: 'manager', label: '担当者' },
+  { value: 'chief', label: '主任' },
 ];
 
 function roleLabel(role) {
@@ -239,7 +240,7 @@ export default function BulkUserImport({ groups = [], onComplete }) {
                 <span>テンプレートの「メンバー追加」シートの2〜101行目へ入力してください。DiscordユーザーIDは文字列のまま貼り付けます。</span>
                 <a className="admin-excel-template" href="/templates/member-import.xlsx" download="メンバー追加リスト.xlsx">Excelテンプレートをダウンロード</a>
               </div>
-              <p className="admin-bulk-settings-hint">登録可能なグループ：{availableGroups.length ? availableGroups.join('、') : 'グループがありません'}<br />権限：一般参加者 または 担当者</p>
+              <p className="admin-bulk-settings-hint">登録可能なグループ：{availableGroups.length ? availableGroups.join('、') : 'グループがありません'}<br />権限：一般参加者・担当者・主任（全グループの会計を閲覧）</p>
               <Field label="入力済みのExcelファイル" required>
                 <input ref={fileInputRef} type="file" className="admin-input admin-excel-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={busy || availableGroups.length === 0} aria-describedby="admin-excel-hint" onChange={(event) => {
                   const file = event.target.files?.[0] || null;

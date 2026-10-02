@@ -13,6 +13,7 @@ export const BOOTSTRAP_BLOCKING_TABLES = Object.freeze([
   'audit_logs',
   'cleared_order_requests',
   'push_subscriptions',
+  'cash_receipts',
 ]);
 
 export const EMPTY_CHECK_SQL = [
@@ -113,7 +114,7 @@ function runCli() {
   try {
     const blockingTableCount = parseProductionD1CheckOutput(result.stdout);
     assertProductionD1Empty(blockingTableCount);
-    console.log('Production D1 empty check OK: checked tables=8, existing tables=0.');
+    console.log(`Production D1 empty check OK: checked tables=${BOOTSTRAP_BLOCKING_TABLES.length}, existing tables=0.`);
   } catch (error) {
     const message = error instanceof ProductionD1EmptyCheckError
       ? error.message

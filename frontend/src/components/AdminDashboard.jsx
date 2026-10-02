@@ -8,6 +8,7 @@ import BulkUserImport from './admin/BulkUserImport';
 import DataResetPanel from './admin/DataResetPanel';
 import OrderHistoryClearPanel from './admin/OrderHistoryClearPanel';
 import UserDeleteAction from './admin/UserDeleteAction';
+import OrderCancelAction from './OrderCancelAction';
 
 const ADMIN_TABS = [
   { id: 'overview', label: '全体状況' },
@@ -21,6 +22,7 @@ const ADMIN_TABS = [
 const ROLE_OPTIONS = [
   { value: 'member', label: '一般参加者' },
   { value: 'manager', label: '担当者' },
+  { value: 'chief', label: '主任' },
   { value: 'admin', label: '管理者' },
 ];
 const ASSIGNABLE_ROLE_OPTIONS = ROLE_OPTIONS.filter((option) => option.value !== 'admin');
@@ -37,6 +39,9 @@ const AUDIT_LABELS = {
   ORDER_CREATE: '注文作成',
   ADMIN_ORDER_CREATE: '管理者による注文追加',
   ADMIN_ORDER_CANCEL: '管理者による事前追加の訂正',
+  ORDER_CANCEL: '注文取消',
+  CASH_RECEIPT_SET: '現金受取を確認',
+  CASH_RECEIPT_CLEAR: '現金受取記録を解除',
   ORDER_QUANTITY_UPDATE: '注文個数変更',
   ORDER_STATUS_UPDATE: '注文伝達済み',
   USER_CREATE: '参加者追加',
@@ -73,7 +78,7 @@ function validateMenu(values) {
   return { value: { name, category, size, price } };
 }
 
-export default function AdminDashboard({ onOrderHistoryCleared }) {
+export default function AdminDashboard({ currentUser, onOrderHistoryCleared }) {
   const [activeTab, setActiveTab] = useState('overview');
   const [loadState, setLoadState] = useState('loading');
   const [loadError, setLoadError] = useState('');
@@ -443,32 +448,6 @@ export default function AdminDashboard({ onOrderHistoryCleared }) {
     }
   };
 
-  const cancelAdminAddedOrder = async (order) => {
-    if (busyAdminOrderId !== null) return;
-    if (!window.confirm(`${order.user_name}さんへ事前追加した「${order.item_name}」を訂正し、合計から除外しますか？`)) return;
-
-    setBusyAdminOrderId(order.id);
-    try {
-      await apiRequest(`/api/admin/orders/${order.id}/cancel`, { method: 'POST' });
-      setOrders((current) => current.map((item) => (
-        item.id === order.id ? { ...item, status: 'cancelled' } : item
-      )));
-      setNotice({
-        tone: 'success',
-        title: '事前追加した注文を訂正しました。',
-        message: '利用者の注文履歴にも取消済みとして残り、合計から除外されます。',
-      });
-    } catch (error) {
-      setNotice({
-        tone: 'danger',
-        title: '事前追加した注文を訂正できませんでした。',
-        message: getErrorMessage(error),
-      });
-    } finally {
-      setBusyAdminOrderId(null);
-    }
-  };
-
   const addMenu = async (event) => {
     event.preventDefault();
     const validation = validateMenu(newMenu);
@@ -814,8 +793,8 @@ export default function AdminDashboard({ onOrderHistoryCleared }) {
           <p className="admin-panel-description">現在登録されている注文を確認できます。</p>
         </div>
         <div id="admin-order-cancel-policy">
-          <StatusNotice tone="info" title="管理者が事前追加した注文だけ訂正できます">
-            入力を誤った場合は「事前追加を訂正」を押してください。参加者本人の注文を取り消す場合は、従来どおり担当者へ直接確認してください。
+          <StatusNotice tone="info" title="取消理由を確認してから取り消してください">
+            店員へ伝達済みの注文は、店舗に連絡して取消可能なことを確認してから操作します。取消済みの注文は履歴に残り、会計の合計から除外されます。
           </StatusNotice>
         </div>
 
@@ -833,25 +812,15 @@ export default function AdminDashboard({ onOrderHistoryCleared }) {
                   {order.status === 'cancelled' && <small className="admin-source-label is-cancelled">取消済み・合計対象外</small>}
                 </div>
                 <div className="admin-order-total">{formatYen(orderTotal(order))}</div>
-                {Number(order.added_by_admin) === 1 && order.status !== 'cancelled' ? (
-                  <button
-                    type="button"
-                    className="admin-button admin-button-danger"
-                    disabled={busyAdminOrderId !== null}
-                    onClick={() => cancelAdminAddedOrder(order)}
-                  >
-                    {busyAdminOrderId === order.id ? '訂正しています' : '事前追加を訂正'}
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="admin-button admin-button-disabled"
-                    disabled
-                    aria-describedby="admin-order-cancel-policy"
-                  >
-                    {order.status === 'cancelled' ? '取消済み' : '取消は利用停止中'}
-                  </button>
-                )}
+                <OrderCancelAction order={order} currentUser={currentUser}
+                  disabled={busyAdminOrderId !== null || adminOrderState.busy}
+                  onBusyChange={(value) => setBusyAdminOrderId(value ? order.id : null)}
+                  onRefresh={() => fetchData({ tabId: 'orders' })}
+                  onCancelled={async () => {
+                    setOrders((current) => current.map((item) => item.id === order.id ? { ...item, status: 'cancelled' } : item));
+                    setNotice({ tone: 'success', title: '注文を取り消しました。', message: '履歴には取消済みとして残り、会計の合計から除外されます。' });
+                    await fetchData({ tabId: 'orders' });
+                  }} />
               </li>
             ))}
           </ul>

@@ -11,12 +11,18 @@ function safeCount(value) {
 
 function normalizePreview(payload) {
   const data = payload?.data || {};
+  if (!Number.isSafeInteger(data.cash_receipt_count) || data.cash_receipt_count < 0
+    || !/^[A-Za-z0-9_-]{43}$/.test(data.cash_receipt_snapshot_token || '')) {
+    throw new Error('Invalid cash receipt preview');
+  }
   return {
     userCount: safeCount(data.user_count),
     orderCount: safeCount(data.order_count),
     otherSessionCount: safeCount(data.other_session_count),
     preservedMenuCount: safeCount(data.preserved_menu_count),
     preservedAuditCount: safeCount(data.preserved_audit_count),
+    cashReceiptCount: data.cash_receipt_count,
+    cashReceiptSnapshotToken: data.cash_receipt_snapshot_token,
   };
 }
 
@@ -25,7 +31,7 @@ function resetErrorMessage(error) {
     return '安全確認のため、いったんログアウトしてDiscordへ再ログインし、この画面へ戻ってください。';
   }
   if (error instanceof ApiError && error.payload?.code === 'RESET_PREVIEW_STALE') {
-    return '確認後に参加者または注文が更新されました。最新件数を読み直してから、もう一度確認してください。';
+    return '確認後に参加者・注文・現金受取記録のいずれかが更新されました。最新件数を読み直してから、もう一度確認してください。';
   }
   return getErrorMessage(error, '開催データをリセットできませんでした。');
 }
@@ -89,6 +95,7 @@ export default function DataResetPanel({ onComplete }) {
           expected_user_count: preview.userCount,
           expected_order_count: preview.orderCount,
           expected_other_session_count: preview.otherSessionCount,
+          expected_cash_receipt_snapshot_token: preview.cashReceiptSnapshotToken,
         },
       });
     } catch (error) {
@@ -119,7 +126,7 @@ export default function DataResetPanel({ onComplete }) {
     setNotice({
       tone: 'success',
       title: '開催データをリセットしました',
-      message: `参加者${deletedUsers}人、注文${deletedOrders}件、ログイン状態${deletedSessions}件を削除しました。`,
+      message: `参加者${deletedUsers}人、注文${deletedOrders}件、ログイン状態${deletedSessions}件と、全員分の現金受取記録を削除しました。`,
     });
     try {
       onComplete?.({ payload });
@@ -179,6 +186,7 @@ export default function DataResetPanel({ onComplete }) {
                 <div><dt>参加者</dt><dd>{preview.userCount}人</dd></div>
                 <div><dt>注文・取消記録</dt><dd>{preview.orderCount}件</dd></div>
                 <div><dt>他端末のログイン状態</dt><dd>{preview.otherSessionCount}件</dd></div>
+                <div><dt>現金受取記録（管理者分も含む）</dt><dd>{preview.cashReceiptCount}件</dd></div>
               </dl>
             </section>
             <section className="admin-reset-counts is-keep" aria-labelledby="admin-reset-keep-heading">

@@ -1,0 +1,50 @@
+.manager-screen .manager-status-row { gap: 8px; margin-bottom: 12px; }
+.manager-screen .pending-count-card,
+.manager-screen .last-update-card { min-height: 68px; padding: 8px 12px; }
+.manager-screen .pending-count-card strong,
+.manager-screen .last-update-card strong { font-size: 1.25rem; }
+.manager-screen .manager-order-section { padding: 12px; }
+.manager-screen .manager-group-filter { gap: 4px; margin-bottom: 12px; font-size: 0.875rem; }
+.manager-handoff-tables { display: grid; gap: 14px; }
+.manager-handoff-table > h3 { margin: 0 0 6px; color: var(--indigo); font-size: 0.9375rem; }
+.manager-handoff-products { overflow: hidden; border: 1px solid var(--line-strong); border-radius: 10px; }
+.manager-product + .manager-product { border-top: 1px solid var(--line); }
+.manager-product > summary {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  min-height: 56px; padding: 7px 10px; cursor: pointer; list-style: none;
+}
+.manager-product > summary::-webkit-details-marker { display: none; }
+.manager-product > summary:hover { background: var(--surface-soft); }
+.manager-product[open] > summary { background: var(--indigo-soft); }
+.manager-product-summary { display: grid; min-width: 0; gap: 2px; }
+.manager-product-name { font-size: 0.9375rem; line-height: 1.4; overflow-wrap: anywhere; }
+.manager-product-quantities { display: flex; flex-wrap: wrap; column-gap: 12px; row-gap: 2px; font-size: 0.8125rem; color: var(--muted); }
+.manager-product-quantities > span { white-space: nowrap; }
+.manager-product-quantities b { color: var(--indigo); font-size: 0.9375rem; margin-left: 4px; }
+.manager-product-unsaved { color: var(--warning); font-weight: 700; }
+.manager-product-toggle { flex-shrink: 0; color: var(--muted); font-size: 0.75rem; }
+.manager-product-toggle::after { content: ' ＋'; }
+.manager-product[open] .manager-product-toggle::after { content: ' −'; }
+.manager-product-details { padding: 8px 10px; border-top: 1px solid var(--line); }
+.manager-product-details > p { margin: 0 0 6px; color: var(--muted); font-size: 0.75rem; }
+.manager-variant-detail + .manager-variant-detail { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
+.manager-variant-detail > h4 { margin: 0 0 4px; color: var(--indigo); font-size: 0.875rem; }
+.manager-person-list,
+.manager-order-edit-list { list-style: none; margin: 0; padding: 0; }
+.manager-person-list > li + li { margin-top: 6px; border-top: 1px solid var(--line); padding-top: 6px; }
+.manager-person-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 8px; font-size: 0.8125rem; }
+.manager-person-heading > span { color: var(--muted); }
+.manager-order-edit-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding-top: 4px; }
+.manager-order-edit-row > small { flex-basis: 100%; color: var(--muted); font-size: 0.75rem; }
+.manager-order-edit-row .quantity-control { grid-template-columns: 44px 28px 44px; }
+.manager-order-edit-row .quantity-control button { min-height: 44px; font-size: 1rem; }
+.manager-order-edit-row .quantity-control output { font-size: 0.9375rem; }
+.manager-order-edit-row .save-line-button { margin-left: auto; padding: 6px 10px; }
+.manager-order-edit-row .saved-label { margin-left: auto; }
+.manager-screen .complete-orders-panel { gap: 10px; margin: 12px 0 0; padding: 12px; }
+
+@media (max-width: 380px) {
+  .manager-screen .manager-order-section { padding: 9px; }
+  .manager-product > summary { padding-inline: 8px; }
+  .manager-product-details { padding-inline: 8px; }
+}

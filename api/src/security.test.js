@@ -83,6 +83,9 @@ test('authorization and input helpers reject client-controlled invalid values', 
   assert.equal(hasRole('manager', ['manager', 'admin']), true);
   assert.equal(hasRole('member', ['manager', 'admin']), false);
   assert.equal(isAssignableUserRole('manager'), true);
+  assert.equal(isAssignableUserRole('chief'), true);
+  assert.equal(hasRole('chief', ['manager', 'admin']), false);
+  assert.equal(hasRole('chief', ['manager', 'chief', 'admin']), true);
   assert.equal(isAssignableUserRole('admin'), false);
   assert.equal(isUnsafeMethod('PATCH'), true);
   assert.equal(isUnsafeMethod('GET'), false);

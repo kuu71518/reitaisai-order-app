@@ -122,10 +122,10 @@ export default function OrderHistoryClearPanel({ onComplete }) {
           <section className="admin-reset-counts is-keep" aria-label="保持するデータ">
             <h3>そのまま残るもの</h3>
             <dl>
-              <div><dt>管理者・担当者・参加者</dt><dd>{preview.preserved_user_count}人</dd></div>
+              <div><dt>管理者・主任・担当者・参加者</dt><dd>{preview.preserved_user_count}人</dd></div>
               <div><dt>メニュー</dt><dd>{preview.preserved_menu_count}件</dd></div>
             </dl>
-            <p>グループ・権限・ログイン状態・操作履歴も残ります。</p>
+            <p>グループ・権限・ログイン状態・操作履歴・現金受取記録も残ります。受取確認時と注文合計が変わった場合は、会計に「金額変更あり」と表示します。</p>
           </section>
         </div>
         {preview.order_count === 0 ? <StatusNotice tone="info" title="削除する注文履歴はありません" /> : <>

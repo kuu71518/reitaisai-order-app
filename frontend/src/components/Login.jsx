@@ -47,6 +47,13 @@ export default function Login({ notice = '', sessionError = '', onRetrySession }
     window.history.replaceState({}, '', `${url.pathname}${url.search}`);
   }, [authResult]);
 
+  useEffect(() => {
+    // Browsers can restore this exact React state when returning from Discord.
+    const resetLeaving = () => setIsLeaving(false);
+    window.addEventListener('pageshow', resetLeaving);
+    return () => window.removeEventListener('pageshow', resetLeaving);
+  }, []);
+
   return (
     <div className="login-shell">
       <div className="festival-ribbon ribbon-one" aria-hidden="true" />
@@ -79,7 +86,11 @@ export default function Login({ notice = '', sessionError = '', onRetrySession }
         <a
           className={isLeaving ? 'discord-login-button is-loading' : 'discord-login-button'}
           href={getDiscordLoginUrl()}
-          onClick={() => setIsLeaving(true)}
+          onClick={(event) => {
+            if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            if (isLeaving) event.preventDefault();
+            else setIsLeaving(true);
+          }}
           aria-busy={isLeaving}
         >
           <span className="discord-button-mark" aria-hidden="true">●●</span>
@@ -90,7 +101,7 @@ export default function Login({ notice = '', sessionError = '', onRetrySession }
           <li>
             <span aria-hidden="true">1</span>
             <div>
-              <strong>Discordを開く</strong>
+              <strong>Discordの認証画面を開く</strong>
               <small>ログインボタンを押します。</small>
             </div>
           </li>
@@ -105,6 +116,8 @@ export default function Login({ notice = '', sessionError = '', onRetrySession }
 
         <details className="login-details">
           <summary>ログインについて・困ったとき</summary>
+          <p>スマートフォンではSafariやChromeで開き、次回も同じブラウザを使ってください。Discordなどのアプリ内ブラウザとは、ログイン状態が別になることがあります。</p>
+          <p>Discordアプリが入っていても、認証画面がブラウザで開く場合があります。表示されたDiscordの画面で認証して戻ってください。</p>
           <p>アカウントIDを一時的に照合します。IDそのもの・表示名・メッセージは保存しません。</p>
           <p>共用端末では、利用後にログアウトしてください。期限切れ・別のブラウザ・Cookie削除後は再度ログインが必要です。</p>
           <p>ログインできないときは、管理者に利用登録済みか確認してください。</p>

@@ -7,7 +7,7 @@ import { deriveDiscordIdHmac, sha256Base64Url } from '../../api/src/security.js'
 
 const ORIGIN = 'http://127.0.0.1:5174'
 const COOKIE = 'reitaisai_demo_session'
-const roles = new Set(['admin', 'member', 'manager'])
+const roles = new Set(['admin', 'member', 'manager', 'chief'])
 const sampleRows = [
   ['参加者名', 'DiscordユーザーID', 'グループ', '権限'],
   ['テスト追加メンバー', '900000000000000001', 'クラシック席', '一般参加者'],
@@ -62,7 +62,7 @@ export function localDemo() {
   async function reset() {
     database?.close()
     database = new DatabaseSync(':memory:')
-    for (const name of ['0001_initial.sql', '0002_security_constraints.sql', '0003_discord_allowlist_and_admin_orders.sql', '0004_cleared_order_requests.sql', '0005_push_subscriptions.sql']) {
+    for (const name of ['0001_initial.sql', '0002_security_constraints.sql', '0003_discord_allowlist_and_admin_orders.sql', '0004_cleared_order_requests.sql', '0005_push_subscriptions.sql', '0006_chief_role.sql', '0007_cash_receipts.sql']) {
       database.exec(readFileSync(new URL(`../../api/migrations/${name}`, import.meta.url), 'utf8'))
     }
     const people = [
@@ -70,6 +70,8 @@ export function localDemo() {
       ['テスト参加者', 'クラシック席', 'member'],
       ['テスト担当者', 'クラシック席', 'manager'],
       ['テスト参加者B', 'ニュークラシック席', 'member'],
+      ['テスト主任', 'クラシック席', 'chief'],
+      ['テスト未注文参加者', 'ニュークラシック席', 'member'],
     ]
     for (const [index, person] of people.entries()) {
       const hmac = await deriveDiscordIdHmac(key, String(900000000000000101n + BigInt(index)))
@@ -77,10 +79,10 @@ export function localDemo() {
     }
     for (const item of [
       ['ソフトドリンク', 'テスト用ウーロン茶', '通常', 300],
-      ['ビール', 'テスト用生ビール', '中', 500],
+      ['ビール', 'テスト用キリン一番搾り（生）', '中', 500],
       ['揚物', 'テスト用からあげ', '通常', 600],
       ['一品', 'テスト用枝豆', '通常', 300],
-      ['ビール', 'テスト用生ビール', '大', 800],
+      ['ビール', 'テスト用キリン一番搾り（生）', '大', 800],
       ['ソフトドリンク', 'テスト用ウーロン茶', '大', 450],
       ['サラダ', 'テスト用・季節の野菜をたっぷり使った彩りサラダ', '取り分け用', 850],
       ['食事', 'テスト用おにぎり', '通常', 250],
@@ -159,7 +161,7 @@ export function localDemo() {
           if (url.pathname.startsWith('/__demo')) return json(res, { success: false }, 404)
           if (url.pathname.startsWith('/api/auth/discord/')) {
             res.setHeader('Content-Type', 'text/html; charset=utf-8')
-            return res.end('<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>テスト用ログイン</title><body style="font:18px sans-serif;padding:28px;line-height:1.8"><h1>テスト用ログイン</h1><p>この画面ではDiscordへ接続しません。上部の「管理者」「参加者」「担当者」を選ぶとログインできます。</p></body></html>')
+            return res.end('<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>テスト用ログイン</title><body style="font:18px sans-serif;padding:28px;line-height:1.8"><h1>テスト用ログイン</h1><p>この画面ではDiscordへ接続しません。上部の「管理者」「参加者」「担当者」「主任」を選ぶとログインできます。</p></body></html>')
           }
           const headers = new Headers()
           for (const [name, value] of Object.entries(req.headers)) if (value != null && !['host', 'content-length', 'cookie'].includes(name)) headers.set(name, Array.isArray(value) ? value.join(', ') : value)

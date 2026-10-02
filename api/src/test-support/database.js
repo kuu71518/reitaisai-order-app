@@ -3,11 +3,12 @@ import { DatabaseSync } from 'node:sqlite';
 import { app } from '../index.ts';
 import { deriveCsrfToken, sha256Base64Url } from '../security.js';
 
-export async function createFixture(t) {
+export async function createFixture(t, { lastMigration } = {}) {
   t.mock.method(globalThis, 'fetch', async () => { throw new Error('External traffic is disabled in tests'); });
   const sqlite = new DatabaseSync(':memory:');
   const migrations = new URL('../../migrations/', import.meta.url);
   for (const file of readdirSync(migrations).filter((name) => name.endsWith('.sql')).sort()) {
+    if (lastMigration && file > lastMigration) break;
     sqlite.exec(readFileSync(new URL(file, migrations), 'utf8'));
   }
   const now = Math.floor(Date.now() / 1000);
