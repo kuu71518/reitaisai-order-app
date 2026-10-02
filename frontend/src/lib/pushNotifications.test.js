@@ -23,10 +23,12 @@ test('service worker displays a generic notification even for an empty push and 
   await finished;
   assert.equal(shown[0][0], '新しい注文があります');
   assert.equal(shown[0][1].tag, 'pending-orders');
+  assert.equal(shown[0][1].silent, false);
+  assert.deepEqual(shown[0][1].vibrate, [180, 100, 180]);
   assert.equal(JSON.stringify(shown).includes('private content'), false);
 });
 
-for (const open of [true, false]) test(`notification click ${open ? 'focuses the app without losing the cart' : 'opens the manager view'}`, async () => {
+for (const open of [true, false]) test(`notification click ${open ? 'focuses the app without losing the cart' : 'opens notification history'}`, async () => {
   const handlers = {}; const messages = []; const opened = []; let focused = false; let closed = false;
   const client = { url: 'https://app.example.test/', focus: async () => { focused = true; }, postMessage: (message) => messages.push(message) };
   registerPushEvents({ addEventListener: (name, handler) => { handlers[name] = handler; }, location: { origin: 'https://app.example.test' },
@@ -35,6 +37,30 @@ for (const open of [true, false]) test(`notification click ${open ? 'focuses the
   handlers.notificationclick({ notification: { close: () => { closed = true; } }, waitUntil: (promise) => { finished = promise; } });
   await finished;
   assert.equal(closed, true);
-  if (open) { assert.equal(focused, true); assert.deepEqual(messages, [{ type: 'OPEN_MANAGER_ORDERS' }]); assert.deepEqual(opened, []); }
-  else assert.deepEqual(opened, ['https://app.example.test/?view=manager']);
+  if (open) { assert.equal(focused, true); assert.deepEqual(messages, [{ type: 'OPEN_NOTIFICATION_HISTORY' }]); assert.deepEqual(opened, []); }
+  else assert.deepEqual(opened, ['https://app.example.test/?view=notifications']);
+});
+
+test('a background push persists its receipt and tells open clients to update their unread history', async () => {
+  const handlers = {}; const actions = []; const messages = [];
+  registerPushEvents({ addEventListener: (name, handler) => { handlers[name] = handler; },
+    registration: { showNotification: async () => { actions.push('display'); } },
+    clients: { matchAll: async () => [{ postMessage: (message) => messages.push(message) }] },
+  }, { receivePush: async () => { actions.push('save'); return { scope: 'opaque-scope' }; } });
+  let finished;
+  handlers.push({ waitUntil: (promise) => { finished = promise; } });
+  await finished;
+  assert.deepEqual(actions, ['save', 'display']);
+  assert.deepEqual(messages, [{ type: 'NOTIFICATION_HISTORY_UPDATED', scope: 'opaque-scope' }]);
+});
+
+test('an unavailable history database never prevents a lock-screen notification', async () => {
+  const handlers = {}; let displayed = 0;
+  registerPushEvents({ addEventListener: (name, handler) => { handlers[name] = handler; },
+    registration: { showNotification: async () => { displayed++; } },
+  }, { receivePush: async () => { throw new Error('storage unavailable'); } });
+  let finished;
+  handlers.push({ waitUntil: (promise) => { finished = promise; } });
+  await finished;
+  assert.equal(displayed, 1);
 });

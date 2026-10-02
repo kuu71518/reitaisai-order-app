@@ -6,8 +6,8 @@ import { canManageOrders, canReceiveOrderNotifications } from '../lib/orderAcces
 export function useManagerOrders(currentUser, onOrders) {
   const receivesNotifications = canReceiveOrderNotifications(currentUser);
   const userScope = receivesNotifications ? JSON.stringify([currentUser.id, currentUser.group_id, currentUser.role]) : null;
-  // Chiefs/admins share their handoff poll with notifications. Managers poll
-  // only IDs, so their browser never receives individual handoff information.
+  // Share the handoff poll with notifications. The API restricts managers to
+  // their assigned group; chiefs/admins receive orders from all groups.
   const url = canManageOrders(currentUser) ? '/api/manager/orders?status=pending' : '/api/notifications/orders';
   const key = receivesNotifications
     ? [url, userScope]
@@ -22,7 +22,7 @@ export function useManagerOrders(currentUser, onOrders) {
     revalidateOnFocus: true,
     onSuccess: (payload) => {
       setLastUpdate({ key: userScope, value: new Date() });
-      onOrders?.(payload?.data || []);
+      onOrders?.(payload?.data || [], userScope);
     },
   });
 

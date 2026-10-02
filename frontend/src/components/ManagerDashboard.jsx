@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { apiRequest, getErrorMessage } from '../lib/api';
 import { formatTime } from '../lib/format';
 import { groupOrdersForHandoff } from '../lib/managerOrderGroups';
-import { canManageAllGroups } from '../lib/orderAccess';
+import { canEditOrderQuantities, canManageAllGroups } from '../lib/orderAccess';
 import { EmptyState, LoadingState, ScreenIntro, StatusNotice } from './States';
 import ConfirmDialog from './ConfirmDialog';
 import OrderCancelAction from './OrderCancelAction';
@@ -25,10 +25,13 @@ export default function ManagerDashboard({
   const [ordersToComplete, setOrdersToComplete] = useState(null);
   const [selectedGroup, setSelectedGroup] = useState('');
   const allGroups = canManageAllGroups(currentUser);
+  const canEditQuantities = canEditOrderQuantities(currentUser);
   const groupOptions = [...new Set(orders.map((order) => order.group_id))].sort((a, b) => String(a).localeCompare(String(b), 'ja'));
   const visibleOrders = useMemo(() => (
-    allGroups && selectedGroup ? orders.filter((order) => order.group_id === selectedGroup) : orders
-  ), [allGroups, orders, selectedGroup]);
+    allGroups
+      ? selectedGroup ? orders.filter((order) => order.group_id === selectedGroup) : orders
+      : orders.filter((order) => order.group_id === currentUser.group_id)
+  ), [allGroups, orders, selectedGroup, currentUser.group_id]);
 
   const groupedTables = useMemo(() => groupOrdersForHandoff(visibleOrders, quantityDrafts), [visibleOrders, quantityDrafts]);
 
@@ -40,6 +43,7 @@ export default function ManagerDashboard({
   const showFeedback = (tone, title, message) => setFeedback({ tone, title, message });
 
   const changeQuantityDraft = (order, delta) => {
+    if (!canEditQuantities) return;
     setQuantityDrafts((drafts) => {
       const current = Number(drafts[order.id] ?? order.quantity);
       const nextQuantity = Math.max(1, Math.min(20, current + delta));
@@ -51,7 +55,7 @@ export default function ManagerDashboard({
   };
 
   const saveQuantity = async (order) => {
-    if (busyOrderId !== null || isCompleting || isCancelling) return;
+    if (!canEditQuantities || busyOrderId !== null || isCompleting || isCancelling) return;
     const quantity = Number(quantityDrafts[order.id] ?? order.quantity);
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > 20) {
       showFeedback('danger', '個数を保存できません', '個数は1～20の整数にしてください。');
@@ -111,7 +115,7 @@ export default function ManagerDashboard({
     <section className="screen manager-screen">
       <ScreenIntro
         eyebrow={allGroups ? `全グループ ${currentUser.role === 'chief' ? '主任' : '管理者'}` : `${currentUser.group_id} 担当者`}
-        title="注文を取りまとめる"
+        title={allGroups ? '注文を取りまとめる' : '担当グループの注文を伝える'}
         description="個数を確認し、店員へ伝えた後にまとめて「伝達済み」にします。"
         action={(
           <button type="button" className="secondary-button compact-button" onClick={() => refreshOrders()} disabled={isRefreshing}>
@@ -198,10 +202,10 @@ export default function ManagerDashboard({
                             {product.hasDraft && <span className="manager-product-unsaved">未保存の変更あり</span>}
                           </span>
                         </span>
-                        <span className="manager-product-toggle">内訳<span className="sr-only">と個数変更</span></span>
+                        <span className="manager-product-toggle">内訳{canEditQuantities && <span className="sr-only">と個数変更</span>}</span>
                       </summary>
                       <div className="manager-product-details">
-                        <p>個数の変更は注文ごとに保存します。</p>
+                        <p>{canEditQuantities ? '個数の変更は注文ごとに保存します。' : '個数の変更や他の方の注文取消は、主任・管理者へ依頼してください。'}</p>
                         {product.variants.map((variant) => (
                           <section key={variant.key} className="manager-variant-detail" aria-label={`${product.menuName} ${variant.size}の内訳`}>
                             <h4>{variant.size}・合計{variant.total}個</h4>
@@ -222,6 +226,7 @@ export default function ManagerDashboard({
                                       return (
                                         <li key={order.id} className="manager-order-edit-row">
                                           {person.orders.length > 1 && <small>{index + 1}件目{order.created_at && `・${formatTime(order.created_at)}`}</small>}
+                                          {canEditQuantities ? <>
                                           <div className="quantity-control" aria-label={`${orderLabel}の個数`}>
                                             <button type="button" onClick={() => changeQuantityDraft(order, -1)} aria-label={`${orderLabel}を1つ減らす`} disabled={controlsBusy || quantity <= 1}>−</button>
                                             <output>{quantity}</output>
@@ -232,6 +237,7 @@ export default function ManagerDashboard({
                                               {isSaving ? '保存中…' : '個数を保存'}
                                             </button>
                                           ) : <span className="saved-label">保存済み</span>}
+                                          </> : <span>{quantity}個</span>}
                                           <OrderCancelAction order={order} currentUser={currentUser} disabled={controlsBusy}
                                             onBusyChange={setIsCancelling} onCancelled={async () => {
                                               setQuantityDrafts((drafts) => {
@@ -288,8 +294,8 @@ export default function ManagerDashboard({
         <summary>困ったとき・注文の訂正</summary>
         <div>
           <p>注文一覧は5秒ごとに更新されます。通信エラーが出た場合は「今すぐ更新」で確認してください。</p>
-          <p>商品を開くと、注文者ごとの内訳と個数の変更ボタンが表示されます。同じ方の注文が複数ある場合も、個数は1件ずつ保存します。</p>
-          <p>伝達前の注文は、商品を開いて「取り消す」から取消できます。店員へ伝えた後の訂正や参加者の変更は、管理者へ直接伝えてください。</p>
+          <p>{canEditQuantities ? '商品を開くと、注文者ごとの内訳と個数の変更ボタンが表示されます。同じ方の注文が複数ある場合も、個数は1件ずつ保存します。' : '商品を開くと、担当グループの注文者ごとの内訳を確認できます。数量の変更は主任・管理者へ依頼してください。'}</p>
+          <p>{canEditQuantities ? '伝達前の注文は、商品を開いて「取り消す」から取消できます。' : '自分の伝達前の注文だけ、商品を開いて取り消せます。'}店員へ伝えた後の訂正や参加者の変更は、管理者へ直接伝えてください。</p>
         </div>
       </details>
       <ConfirmDialog open={Boolean(ordersToComplete)} title="店員へ伝え終わりましたか？"

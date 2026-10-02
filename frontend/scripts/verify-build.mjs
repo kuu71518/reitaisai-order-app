@@ -15,7 +15,11 @@ assert.doesNotMatch(serviceWorker, /(?:\/api\/|order-api\.touhoudaienkai\.com)/)
 assert.match(serviceWorker, /addEventListener\([`'"]push[`'"]/)
 assert.match(serviceWorker, /showNotification\([`'"]新しい注文があります[`'"]/)
 assert.match(serviceWorker, /notificationclick/)
-assert.match(serviceWorker, /OPEN_MANAGER_ORDERS/)
+assert.match(serviceWorker, /OPEN_NOTIFICATION_HISTORY/)
+assert.match(serviceWorker, /NOTIFICATION_HISTORY_UPDATED/)
+assert.match(serviceWorker, /reitaisai-notification-history/)
+assert.match(serviceWorker, /view=notifications/)
+assert.match(serviceWorker, /vibrate/)
 assert.doesNotMatch(serviceWorker, /(?:WEB_PUSH_PRIVATE_KEY|DISCORD_ID_HMAC_KEY|csrf_token|session_token)/)
 
 assert.match(

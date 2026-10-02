@@ -9,10 +9,12 @@ import VenueGuide from './components/VenueGuide';
 import NavIcon from './components/NavIcon';
 import ConfirmDialog from './components/ConfirmDialog';
 import PushNotificationSettings from './components/PushNotificationSettings';
+import NotificationHistory from './components/NotificationHistory';
 import { LoadingState, StatusNotice } from './components/States';
 import { useManagerOrders } from './hooks/useManagerOrders';
+import { useNotificationHistory } from './hooks/useNotificationHistory';
 import { ApiError, apiRequest, clearSessionToken, loadSession } from './lib/api';
-import { canManageOrders, canReceiveOrderNotifications, collectOrderNotifications, getNavItems } from './lib/orderAccess';
+import { canManageOrders, canReceiveOrderNotifications, getNavItems } from './lib/orderAccess';
 
 const LEGACY_USER_KEY = 'reitaisai_app_user';
 const ACTIVE_TAB_KEY = 'reitaisai_active_tab';
@@ -96,10 +98,8 @@ export default function App() {
   });
   const [loginNotice, setLoginNotice] = useState('');
   const [latestToast, setLatestToast] = useState(null);
-  const [unreadCount, setUnreadCount] = useState(0);
+  const [historyOpenFor, setHistoryOpenFor] = useState(null);
   const [privacyCovered, setPrivacyCovered] = useState(false);
-  const notifiedOrderIds = useRef(new Set());
-  const orderBaselineReady = useRef(false);
   const toastTimer = useRef(null);
   const resumeController = useRef(null);
   const sessionGeneration = useRef(0);
@@ -114,23 +114,15 @@ export default function App() {
     };
 
     setLatestToast(toast);
-    setUnreadCount((current) => current + count);
     window.clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => {
       setLatestToast((current) => (current?.id === toast.id ? null : current));
     }, 6000);
   }, []);
 
-  const handleManagerOrders = useCallback((orders) => {
-    const { ids, newCount } = collectOrderNotifications(
-      orderBaselineReady.current ? notifiedOrderIds.current : null, orders,
-    );
-    notifiedOrderIds.current = ids;
-    orderBaselineReady.current = true;
-    if (newCount > 0) showOrderToast(newCount);
-  }, [showOrderToast]);
-
-  const managerOrders = useManagerOrders(currentUser, handleManagerOrders);
+  const notifications = useNotificationHistory(currentUser, showOrderToast, authState === 'ready');
+  const { unreadCount, deactivate: deactivateNotifications } = notifications;
+  const managerOrders = useManagerOrders(currentUser, notifications.receiveOrders);
 
   const clearClientSession = useCallback((notice = '') => {
     sessionGeneration.current += 1;
@@ -139,6 +131,7 @@ export default function App() {
     removeSessionKeys();
     removeLegacyLocalStorage();
     clearSessionToken();
+    deactivateNotifications();
     currentUserRef.current = null;
     setCurrentUser(null);
     setActiveTab('menu');
@@ -147,16 +140,14 @@ export default function App() {
     setShowLogout(false);
     setLogoutError('');
     setLatestToast(null);
-    setUnreadCount(0);
+    setHistoryOpenFor(null);
     setPrivacyCovered(false);
     setResumeError('');
     setIsResuming(false);
     setLoginNotice(notice);
-    notifiedOrderIds.current.clear();
-    orderBaselineReady.current = false;
     window.clearTimeout(toastTimer.current);
     void mutateAll(() => true, undefined, { revalidate: false });
-  }, [mutateAll]);
+  }, [mutateAll, deactivateNotifications]);
 
   const handleLogout = useCallback(async () => {
     if (isLoggingOut) return;
@@ -225,15 +216,23 @@ export default function App() {
   }, [clearClientSession]);
 
   useEffect(() => {
-    const openOrders = (event) => {
-      if (event.data?.type !== 'OPEN_MANAGER_ORDERS' || !canReceiveOrderNotifications(currentUser) || orderBusy) return;
-      setActiveTab(canManageOrders(currentUser) ? 'manager' : 'summary');
+    const openHistory = (event) => {
+      if (event.data?.type !== 'OPEN_NOTIFICATION_HISTORY' || !canReceiveOrderNotifications(currentUser) || orderBusy) return;
+      setHistoryOpenFor(`${currentUser.id}:${currentUser.group_id}:${currentUser.role}`);
       setLatestToast(null);
-      setUnreadCount(0);
     };
-    navigator.serviceWorker?.addEventListener('message', openOrders);
-    return () => navigator.serviceWorker?.removeEventListener('message', openOrders);
+    navigator.serviceWorker?.addEventListener('message', openHistory);
+    return () => navigator.serviceWorker?.removeEventListener('message', openHistory);
   }, [currentUser, orderBusy]);
+
+  useEffect(() => {
+    if (!currentUser || !canReceiveOrderNotifications(currentUser)
+      || new URLSearchParams(window.location.search).get('view') !== 'notifications') return;
+    void Promise.resolve().then(() => setHistoryOpenFor(`${currentUser.id}:${currentUser.group_id}:${currentUser.role}`));
+    const url = new URL(window.location.href);
+    url.searchParams.delete('view');
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  }, [currentUser]);
 
   useEffect(() => {
     if (currentUser) writeSessionItem(ACTIVE_TAB_KEY, activeTab);
@@ -258,11 +257,9 @@ export default function App() {
         || previousUser.group_id !== safeUser.group_id || previousUser.role !== safeUser.role)) {
         await mutateAll(() => true, undefined, { revalidate: false });
         if (generation !== sessionGeneration.current) return;
-        notifiedOrderIds.current.clear();
-        orderBaselineReady.current = false;
         window.clearTimeout(toastTimer.current);
         setLatestToast(null);
-        setUnreadCount(0);
+        setHistoryOpenFor(null);
         setActiveTab('menu');
         setOrderView('menu');
         setOrderBusy(false);
@@ -333,6 +330,12 @@ export default function App() {
   const navItems = getNavItems(currentUser);
   const userContextKey = `${currentUser.id}:${currentUser.group_id}:${currentUser.role}`;
   const notificationTab = canManageOrders(currentUser) ? 'manager' : 'summary';
+  const openNotificationHistory = () => {
+    if (orderBusy) return;
+    setHistoryOpenFor(userContextKey);
+    setLatestToast(null);
+    void notifications.refresh();
+  };
   const safeActiveTab = navItems.some((item) => item.id === activeTab) ? activeTab
     : activeTab === 'manager' && canReceiveOrderNotifications(currentUser) ? 'summary' : 'menu';
   const handleNavigate = (tab) => {
@@ -340,7 +343,6 @@ export default function App() {
     if (tab === 'menu') setOrderView('menu');
     setActiveTab(tab);
     setLatestToast(null);
-    if (tab === notificationTab) setUnreadCount(0);
   };
   const handleOrderView = (nextView) => {
     const user = currentUserRef.current;
@@ -373,7 +375,6 @@ export default function App() {
   } else if (safeActiveTab === 'admin') {
     screen = <AdminDashboard key={userContextKey} currentUser={currentUser} onOrderHistoryCleared={() => {
       setLatestToast(null);
-      setUnreadCount(0);
       window.clearTimeout(toastTimer.current);
       return mutateAll((key) => {
         const url = Array.isArray(key) ? key[0] : key;
@@ -402,11 +403,13 @@ export default function App() {
             <button
               type="button"
               className="icon-text-button"
-              onClick={() => handleNavigate(notificationTab)}
-              aria-label={unreadCount > 0 ? `新しい注文が${unreadCount}件あります` : canManageOrders(currentUser) ? '取りまとめを開く' : '会計と新着を確認'}
+              onClick={openNotificationHistory}
+              disabled={orderBusy}
+              aria-label={`通知の受信履歴を開く：未読${unreadCount}件`}
+              aria-haspopup="dialog"
             >
               <span aria-hidden="true">🔔</span>
-              <span className="desktop-only">新着</span>
+              <span className="desktop-only">通知</span>
               {unreadCount > 0 && <span className="count-badge">{unreadCount}</span>}
             </button>
           )}
@@ -437,7 +440,7 @@ export default function App() {
             </button>
           ))}
         </nav>
-        <p className="side-note">注文は席の担当者と主任・管理者へ届きます。主任・管理者が取りまとめて店員へ伝えます。</p>
+        <p className="side-note">注文は席の担当者と主任・管理者へ届きます。担当者・主任・管理者が内容を確認して店員へ伝えます。</p>
       </aside>
 
       <main className="main-stage" id="main-content" ref={mainRef} tabIndex={-1}>
@@ -447,15 +450,16 @@ export default function App() {
         </div>
         <div className="app-guidance">
           <VenueGuide compact />
-          {canReceiveOrderNotifications(currentUser) && <PushNotificationSettings key={userContextKey} currentUser={currentUser} />}
+          {canReceiveOrderNotifications(currentUser) && <PushNotificationSettings key={userContextKey} currentUser={currentUser}
+            alertPreferences={notifications.preferences} onAlertPreferences={notifications.savePreferences} />}
         </div>
         {canReceiveOrderNotifications(currentUser) && unreadCount > 0 && safeActiveTab !== notificationTab && (
           <StatusNotice
             tone="warning"
-            title={`${unreadCount}件の新しい注文があります`}
-            action={<button type="button" className="small-button" onClick={() => handleNavigate(notificationTab)}>{canManageOrders(currentUser) ? '取りまとめを開く' : '会計を確認'}</button>}
+            title={`未読の通知が${unreadCount}件あります`}
+            action={<button type="button" className="small-button" onClick={openNotificationHistory}>受信履歴を見る</button>}
           >
-            {canManageOrders(currentUser) ? '「取りまとめ」で内容を確認してください。' : '「会計」で担当グループの合計を確認してください。'}
+            ベルから受信履歴を開いて確認できます。
           </StatusNotice>
         )}
         <div hidden={!['menu', 'history'].includes(safeActiveTab)}>
@@ -475,7 +479,7 @@ export default function App() {
             onClick={() => handleNavigate(item.id)}
             disabled={orderBusy}
             aria-current={safeActiveTab === item.id ? 'page' : undefined}
-            aria-label={item.id === 'manager' && unreadCount > 0 ? `${item.label}：新着${unreadCount}件` : item.label}
+            aria-label={item.id === 'manager' && unreadCount > 0 ? `${item.label}：未読の通知${unreadCount}件` : item.label}
           >
             <span className="mobile-nav-symbol"><NavIcon name={item.id} /></span>
             <span>{item.id === 'manager' ? 'まとめ' : item.label}</span>
@@ -490,11 +494,15 @@ export default function App() {
             <strong>{latestToast.title}</strong>
             <span>{latestToast.body}</span>
           </div>
-          <button type="button" onClick={() => handleNavigate(notificationTab)}>{canManageOrders(currentUser) ? '注文を確認' : '会計を確認'}</button>
+          <button type="button" onClick={openNotificationHistory}>受信履歴</button>
           <button type="button" className="toast-close" onClick={() => setLatestToast(null)} aria-label="通知を閉じる">×</button>
         </div>
       )}
       </div>
+
+      {canReceiveOrderNotifications(currentUser) && <NotificationHistory key={userContextKey}
+        open={!privacyCovered && historyOpenFor === userContextKey} notifications={notifications}
+        onClose={() => setHistoryOpenFor(null)} onOpenOrders={() => handleNavigate(notificationTab)} busy={orderBusy} />}
 
       <ConfirmDialog open={showLogout} title="この端末からログアウトしますか？"
         confirmLabel="ログアウトする" busy={isLoggingOut} onConfirm={handleLogout} onCancel={() => { setShowLogout(false); setLogoutError(''); }}>

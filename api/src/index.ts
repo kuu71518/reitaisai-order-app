@@ -579,8 +579,8 @@ app.get('/api/notifications/orders', async (c) => {
   if (roleError) return roleError;
   const auth = c.get('auth');
   const allGroups = auth.user.role === 'admin' || auth.user.role === 'chief';
-  // Notification polling exposes IDs only. Managers cannot retrieve the
-  // handoff list or other participants' order details through this endpoint.
+  // This lightweight notification endpoint exposes IDs only. Handoff details
+  // are available separately, with managers restricted to their assigned group.
   const { results } = await c.env.DB.prepare(`
     SELECT o.id FROM orders o JOIN users u ON u.id = o.user_id
     WHERE o.status = 'pending' AND (? = 1 OR u.group_id = ?)
@@ -698,7 +698,7 @@ app.get('/api/orders/mine', async (c) => {
 });
 
 app.get('/api/manager/orders', async (c) => {
-  const roleError = requireRole(c, ['chief', 'admin']);
+  const roleError = requireRole(c, ['manager', 'chief', 'admin']);
   if (roleError) return roleError;
   const auth = c.get('auth');
   const requestedStatus = c.req.query('status') || 'pending';
@@ -784,7 +784,7 @@ app.patch('/api/manager/orders/:id/quantity', async (c) => {
 });
 
 app.patch('/api/manager/orders/status', async (c) => {
-  const roleError = requireRole(c, ['chief', 'admin']);
+  const roleError = requireRole(c, ['manager', 'chief', 'admin']);
   if (roleError) return roleError;
   const auth = c.get('auth');
   const body = await readJsonObject(c);

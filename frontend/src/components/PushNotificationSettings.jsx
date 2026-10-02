@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiRequest, getErrorMessage } from '../lib/api';
 import { applicationServerKey, subscriptionUsesKey } from '../lib/pushNotifications';
 import { canManageAllGroups } from '../lib/orderAccess';
+import { playNotificationAlert, prepareNotificationSound } from '../lib/notificationAlerts';
 
 const PREFERENCE_KEY = 'reitaisai_push_notifications';
 function optedOut() {
@@ -11,11 +12,13 @@ function savePreference(value) {
   try { window.localStorage.setItem(PREFERENCE_KEY, value); } catch { /* Browser subscription remains the primary setting. */ }
 }
 
-export default function PushNotificationSettings({ currentUser }) {
+export default function PushNotificationSettings({ currentUser, alertPreferences, onAlertPreferences }) {
   const [config, setConfig] = useState(null);
   const [status, setStatus] = useState('loading');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [alertMessage, setAlertMessage] = useState('');
+  const [alertBusy, setAlertBusy] = useState(false);
   const alive = useRef(false);
   const inFlight = useRef(false);
   const supportsPush = 'Notification' in window && 'PushManager' in window && 'serviceWorker' in navigator;
@@ -114,6 +117,25 @@ export default function PushNotificationSettings({ currentUser }) {
     } finally { inFlight.current = false; if (alive.current) setBusy(false); }
   };
 
+  const updateAlerts = async (preferences) => {
+    if (alertBusy) return;
+    setAlertBusy(true);
+    // Unlock sound from the actual tap before waiting for browser storage.
+    const prepared = preferences.sound ? await prepareNotificationSound() : false;
+    const saved = await onAlertPreferences(preferences);
+    if (alive.current) {
+      setAlertMessage(saved ? preferences.sound && !prepared
+        ? '通知音を再生できませんでした。「音・振動を確認」から再度お試しください。' : 'アプリ内の音・振動の設定を保存しました。'
+        : '音・振動の設定を保存できませんでした。');
+      setAlertBusy(false);
+    }
+  };
+  const testAlerts = async () => {
+    await prepareNotificationSound();
+    const result = playNotificationAlert(alertPreferences);
+    if (alive.current) setAlertMessage(`通知音：${!alertPreferences.sound ? 'オフ' : result.sound ? '再生を開始しました' : 'このブラウザでは再生できません'}。振動：${!alertPreferences.vibration ? 'オフ' : result.vibration ? '振動を要求しました' : 'この端末・ブラウザでは利用できません'}。`);
+  };
+
   const labels = {
     loading: '通知設定を確認しています', on: 'プッシュ通知：オン', off: 'プッシュ通知：オフ',
     install: 'iPhone・iPadで通知を受け取るには', unsupported: 'このブラウザはプッシュ通知に対応していません',
@@ -137,6 +159,16 @@ export default function PushNotificationSettings({ currentUser }) {
       {status === 'on' ? <button type="button" className="secondary-button compact-button" disabled={busy} onClick={() => void disable()}>この端末の通知を止める</button>
         : config?.configured && ['off', 'error'].includes(status) ? <button type="button" className="primary-button compact-button" disabled={busy} onClick={() => void enable()}>{busy ? '設定しています…' : 'この端末で通知を受け取る'}</button> : null}
       {['error', 'denied'].includes(status) && <button type="button" className="secondary-button compact-button" onClick={() => void sync()} disabled={busy}>通知設定を再確認</button>}
+      <fieldset className="notification-alert-settings">
+        <legend>アプリを開いている間の音・振動</legend>
+        <label><input type="checkbox" checked={alertPreferences.sound} disabled={alertBusy}
+          onChange={(event) => void updateAlerts({ ...alertPreferences, sound: event.target.checked })} />通知音</label>
+        <label><input type="checkbox" checked={alertPreferences.vibration} disabled={alertBusy}
+          onChange={(event) => void updateAlerts({ ...alertPreferences, vibration: event.target.checked })} />バイブレーション（対応端末）</label>
+        <button type="button" className="secondary-button compact-button" disabled={alertBusy} onClick={() => void testAlerts()}>音・振動を確認</button>
+        {alertMessage && <p role="status">{alertMessage}</p>}
+      </fieldset>
+      <p>画面ロック中も受け取るにはプッシュ通知をオンにし、端末の通知設定で「ロック画面」「サウンド」「バイブレーション」を許可してください。ロック中の音・振動は端末側の設定に従います。</p>
       <p className="muted">ログアウト中は通知を停止します。端末の通知許可・通信状態・集中モードの設定によっては通知が届かないことがあります。</p>
     </div>
   </details>;

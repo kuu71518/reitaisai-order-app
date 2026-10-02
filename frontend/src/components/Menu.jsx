@@ -189,7 +189,7 @@ export default function Menu({ currentUser, view, onViewChange, onSubmittingChan
 
   const dismissConfirmedItem = (item) => {
     if (submissionInFlight.current || !item.needsConfirmation) return;
-    const confirmed = window.confirm(`${item.name}（${item.size}）${item.quantity}点について、注文履歴または主任・管理者への確認が済み、再送不要であることを確認しましたか？\nカートから外しても、送信済みの注文は取り消されません。結果が不明な場合は「キャンセル」を押してください。`);
+    const confirmed = window.confirm(`${item.name}（${item.size}）${item.quantity}点について、注文履歴または担当者・主任・管理者への確認が済み、再送不要であることを確認しましたか？\nカートから外しても、送信済みの注文は取り消されません。結果が不明な場合は「キャンセル」を押してください。`);
     if (!confirmed) return;
     setCart((current) => current.filter((entry) => entry.request_id !== item.request_id));
     showFeedback('success', '確認済みの商品をカートから外しました', '送信済みの注文はそのまま残ります。注文内容は履歴で確認できます。');
@@ -227,7 +227,7 @@ export default function Menu({ currentUser, view, onViewChange, onSubmittingChan
     onSubmittingChange(false);
 
     if (failed.length === 0 && clearedCount === 0) {
-      showFeedback('success', '注文を送信しました', '主任・管理者が内容を確認します。注文履歴で状態を確認できます。');
+      showFeedback('success', '注文を送信しました', '担当者・主任・管理者が内容を確認します。注文履歴で状態を確認できます。');
       onViewChange('history');
       await historyQuery.mutate();
       return;
@@ -303,7 +303,7 @@ export default function Menu({ currentUser, view, onViewChange, onSubmittingChan
             {view === 'history' ? 'カートで再確認する' : '注文履歴を確認する'}
           </button>
         )}>
-          重複を防ぐため、結果が分かるまで数量変更・削除はできません。カートから同じ内容で再確認するか、履歴・主任・管理者に確認してください。
+          重複を防ぐため、結果が分かるまで数量変更・削除はできません。カートから同じ内容で再確認するか、履歴・担当者・主任・管理者に確認してください。
         </StatusNotice>
       )}
 
@@ -442,7 +442,7 @@ export default function Menu({ currentUser, view, onViewChange, onSubmittingChan
         <>
           <ScreenIntro
             title="注文内容を確認"
-            description="商品と個数を確認して、主任・管理者へ送ります。"
+            description="商品と個数を確認して、担当者・主任・管理者へ送ります。"
             action={<button type="button" className="secondary-button compact-button" onClick={() => switchView('menu')} disabled={isSubmitting}>メニューへ戻る</button>}
           />
           {renderOrderSteps()}
@@ -455,7 +455,7 @@ export default function Menu({ currentUser, view, onViewChange, onSubmittingChan
               </div>
               <div>
                 <span>送信先</span>
-                <strong>主任・管理者（{currentUser.group_id}の注文）</strong>
+                <strong>担当者・主任・管理者（{currentUser.group_id}の注文）</strong>
               </div>
             </div>
 
@@ -495,7 +495,7 @@ export default function Menu({ currentUser, view, onViewChange, onSubmittingChan
             />
           ) : (
             <div className="submit-panel">
-              <span>{unconfirmedCount > 0 ? '内容を変えずに、受付を再確認します' : `${cartSummary.units}点・${formatYen(cartSummary.total)}を主任・管理者へ`}</span>
+              <span>{unconfirmedCount > 0 ? '内容を変えずに、受付を再確認します' : `${cartSummary.units}点・${formatYen(cartSummary.total)}を担当者・主任・管理者へ`}</span>
               <button type="button" className="primary-button" onClick={submitOrder} disabled={isSubmitting} aria-busy={isSubmitting}>
                 {isSubmitting ? '注文を確認しています…' : unconfirmedCount > 0 ? '送信と受付の再確認をする' : `この${cartSummary.units}点を注文する`}
               </button>
@@ -508,7 +508,7 @@ export default function Menu({ currentUser, view, onViewChange, onSubmittingChan
         <>
           <ScreenIntro
             title="自分の注文履歴"
-            description="「確認中」は主任・管理者へ届いた注文。「注文済み」は店員へ伝達済みです。"
+            description="「確認中」は担当者・主任・管理者へ届いた注文。「注文済み」は店員へ伝達済みです。"
             action={<button type="button" className="secondary-button compact-button" onClick={() => historyQuery.mutate()} disabled={historyQuery.isValidating}>更新する</button>}
           />
 

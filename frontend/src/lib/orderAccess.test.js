@@ -1,16 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canManageOrders, canManageAllGroups, canReceiveOrderNotifications, canViewAccounting, canViewAllAccounting, collectOrderNotifications, getNavItems, groupPendingOrders } from './orderAccess.js';
+import { canManageOrders, canEditOrderQuantities, canManageAllGroups, canReceiveOrderNotifications, canViewAccounting, canViewAllAccounting, collectOrderNotifications, getNavItems, groupPendingOrders } from './orderAccess.js';
 
-test('admin gets handoff navigation; managers get own-group accounting and notifications without handoff actions', () => {
+test('manager gets assigned-group handoff navigation without quantity edits or administrator navigation', () => {
   assert.equal(canManageOrders({ role: 'admin' }), true);
-  assert.equal(canManageOrders({ role: 'manager' }), false);
+  assert.equal(canManageOrders({ role: 'manager' }), true);
+  assert.equal(canEditOrderQuantities({ role: 'manager' }), false);
   assert.equal(canReceiveOrderNotifications({ role: 'manager' }), true);
   assert.equal(canReceiveOrderNotifications({ role: 'admin' }), true);
   assert.deepEqual(getNavItems({ role: 'admin' }).map((item) => item.id), ['menu', 'history', 'manager', 'summary', 'admin']);
-  assert.deepEqual(getNavItems({ role: 'manager' }).map((item) => item.id), ['menu', 'history', 'summary']);
+  assert.deepEqual(getNavItems({ role: 'manager' }).map((item) => item.id), ['menu', 'history', 'manager', 'summary']);
   for (const user of [null, { role: 'member' }, { role: 'unknown' }]) {
     assert.equal(canManageOrders(user), false);
+    assert.equal(canEditOrderQuantities(user), false);
     assert.equal(canReceiveOrderNotifications(user), false);
     assert.deepEqual(getNavItems(user).map((item) => item.id), ['menu', 'history']);
   }
@@ -18,6 +20,8 @@ test('admin gets handoff navigation; managers get own-group accounting and notif
 test('chief inherits order management and notification eligibility for every group, plus all accounting without admin navigation', () => {
   const chief = { role: 'chief' };
   assert.equal(canManageOrders(chief), true);
+  assert.equal(canEditOrderQuantities(chief), true);
+  assert.equal(canEditOrderQuantities({ role: 'admin' }), true);
   assert.equal(canReceiveOrderNotifications(chief), true);
   assert.equal(canManageAllGroups(chief), true);
   assert.equal(canViewAccounting(chief), true);

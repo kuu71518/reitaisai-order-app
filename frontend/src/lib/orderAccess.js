@@ -1,5 +1,9 @@
 export function canManageOrders(user) {
-  return user?.role === 'chief' || user?.role === 'admin';
+  return user?.role === 'manager' || user?.role === 'chief' || user?.role === 'admin';
+}
+
+export function canEditOrderQuantities(user) {
+  return canManageAllGroups(user);
 }
 
 export function canReceiveOrderNotifications(user) {

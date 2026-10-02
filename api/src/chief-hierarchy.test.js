@@ -58,7 +58,7 @@ test('a manager with no orders sees zero for their own group and cannot retrieve
   })).status, 403);
 });
 
-test('chief revocation immediately removes handoff access and narrows accounting/notifications to the assigned group', async (t) => {
+test('chief demotion narrows handoff, accounting and notifications to the assigned group', async (t) => {
   const f = await createFixture(t);
   f.sqlite.exec("UPDATE users SET role = 'chief' WHERE id = 4");
   const otherGroup = f.addOrder();
@@ -66,7 +66,10 @@ test('chief revocation immediately removes handoff access and narrows accounting
   assert.equal((await f.request(4, '/api/manager/orders')).status, 200);
   assert.equal((await (await f.request(4, '/api/orders/summary')).json()).scope, 'all_groups');
   f.sqlite.exec("UPDATE users SET role = 'manager' WHERE id = 4");
-  assert.equal((await f.request(4, '/api/manager/orders')).status, 403);
+  assert.deepEqual((await (await f.request(4, '/api/manager/orders')).json()).data.map((row) => row.id), [ownGroup]);
+  assert.equal((await f.request(4, '/api/manager/orders/status', {
+    method: 'PATCH', body: { order_ids: [otherGroup], status: 'ordered' },
+  })).status, 404);
   assert.deepEqual((await (await f.request(4, '/api/notifications/orders')).json()).data, [{ id: ownGroup }]);
   assert.deepEqual(await (await f.request(4, '/api/orders/summary')).json(), { success: true, scope: 'assigned_group', data: [{ group_id: 'テスト席B', total_price: 300 }] });
   assert.equal((await f.request(4, `/api/manager/orders/${otherGroup}/quantity`, {
