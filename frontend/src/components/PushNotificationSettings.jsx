@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiRequest, getErrorMessage } from '../lib/api';
 import { applicationServerKey, subscriptionUsesKey } from '../lib/pushNotifications';
+import { canManageAllGroups } from '../lib/orderAccess';
 
 const PREFERENCE_KEY = 'reitaisai_push_notifications';
 function optedOut() {
@@ -128,7 +129,7 @@ export default function PushNotificationSettings({ currentUser }) {
       <span className="push-label-compact" aria-hidden="true">{compactLabels[status]}</span>
     </summary>
     <div>
-      <p>{currentUser.role === 'admin' ? '管理者には全グループの注文を通知します。' : '担当するグループの注文を通知します。'} 通知には参加者名や注文内容を表示しません。</p>
+      <p>{canManageAllGroups(currentUser) ? '全グループの注文を通知します。' : '担当するグループの注文を通知します。'} 通知には参加者名や注文内容を表示しません。</p>
       {status === 'install' && <p>Safariの「共有」から「ホーム画面に追加」を選び、追加したアプリを開いて通知をオンにしてください（iOS・iPadOS 16.4以降）。</p>}
       {status === 'denied' && <p>端末・ブラウザの設定でこのアプリの通知を許可し、画面に戻って設定を確認してください。</p>}
       {['unsupported', 'unconfigured'].includes(status) && <p>アプリを開いている間の新着通知は利用できます。</p>}

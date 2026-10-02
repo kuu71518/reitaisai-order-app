@@ -40,11 +40,12 @@ test('VAPID signs a verifiable ES256 JWT for the push origin with a bounded expi
   assert.equal(getPushConfig({ ...f.env, WEB_PUSH_PRIVATE_KEY: 'invalid' }), null);
 });
 
-test('notification registration requires manager/admin, CSRF, valid endpoint/key; binds only the authenticated session', async (t) => {
+test('notification registration requires manager/chief/admin, CSRF, valid endpoint/key; binds only the authenticated session', async (t) => {
   const f = await createFixture(t); await configure(f);
+  f.sqlite.exec("UPDATE users SET role = 'chief' WHERE id = 4");
   const endpoint = 'https://fcm.googleapis.com/fcm/send/test-register';
   const body = { endpoint, public_key: f.env.WEB_PUSH_PUBLIC_KEY, user_id: 5, session_id: 5 };
-  for (const userId of [1, 2]) assert.equal((await f.request(userId, '/api/notifications/config')).status, 200);
+  for (const userId of [1, 2, 4]) assert.equal((await f.request(userId, '/api/notifications/config')).status, 200);
   assert.equal((await f.request(3, '/api/notifications/config')).status, 403);
   assert.equal((await f.request(3, '/api/notifications/subscriptions', { method: 'POST', body })).status, 403);
   assert.equal((await f.request(1, '/api/notifications/subscriptions', { method: 'POST', body, csrf: false })).status, 403);
@@ -56,6 +57,12 @@ test('notification registration requires manager/admin, CSRF, valid endpoint/key
   assert.equal((await f.request(2, '/api/notifications/subscriptions', { method: 'DELETE', body: { endpoint } })).status, 200);
   assert.equal(f.rows('push_subscriptions').length, 1);
   assert.equal((await f.request(1, '/api/notifications/subscriptions', { method: 'DELETE', body: { endpoint } })).status, 200);
+  assert.equal(f.rows('push_subscriptions').length, 0);
+  assert.equal((await f.request(4, '/api/notifications/subscriptions', { method: 'POST', body, csrf: false })).status, 403);
+  assert.equal((await f.request(4, '/api/notifications/subscriptions', { method: 'POST', body })).status, 200);
+  assert.equal(f.rows('push_subscriptions')[0].user_id, 4);
+  assert.equal(f.rows('push_subscriptions')[0].session_id, 4);
+  assert.equal((await f.request(4, '/api/notifications/subscriptions', { method: 'DELETE', body: { endpoint } })).status, 200);
   assert.equal(f.rows('push_subscriptions').length, 0);
 });
 
@@ -96,21 +103,42 @@ test('concurrent arrivals share one generic notification per device within five 
   assert.equal(globalThis.fetch.mock.callCount(), 2);
 });
 
-test('orders notify the admin and same-group manager only, with no payload or participant information', async (t) => {
+test('orders notify admin/chief for every group and only the same-group manager, with no participant payload', async (t) => {
   const f = await createFixture(t); await configure(f);
+  f.sqlite.exec("UPDATE users SET role = 'chief' WHERE id = 4");
   const admin = addSubscription(f, 1); const manager = addSubscription(f, 2);
-  addSubscription(f, 3); addSubscription(f, 5);
+  const chief = addSubscription(f, 4); const otherManager = addSubscription(f, 5);
+  addSubscription(f, 3);
   const sent = [];
   t.mock.method(globalThis, 'fetch', async (url, options) => { sent.push({ url, options }); return new Response(null, { status: 201 }); });
   const response = await f.request(3, '/api/orders', { method: 'POST', body: { menu_item_id: 1, quantity: 1, request_id: 'push_test_request_123456' } });
   assert.equal(response.status, 200); await f.flush();
-  assert.deepEqual(sent.map((item) => item.url).sort(), [admin, manager].sort());
+  assert.deepEqual(sent.map((item) => item.url).sort(), [admin, chief, manager].sort());
   for (const { options } of sent) {
     assert.equal(options.body, undefined); assert.equal(options.redirect, 'error');
     assert.equal(options.headers.TTL, '300'); assert.equal(options.headers.Topic, 'pending-orders');
   }
   assert.equal((await f.request(3, '/api/orders', { method: 'POST', body: { menu_item_id: 1, quantity: 1, request_id: 'push_test_request_123456' } })).status, 200);
-  await f.flush(); assert.equal(sent.length, 2);
+  await f.flush(); assert.equal(sent.length, 3);
+  f.sqlite.exec('UPDATE push_subscriptions SET last_sent_at = last_sent_at - 6');
+  assert.equal((await f.request(4, '/api/orders', { method: 'POST', body: { menu_item_id: 1, quantity: 1, request_id: 'push_chief_other_group_12345' } })).status, 200);
+  await f.flush();
+  assert.deepEqual(sent.slice(3).map((item) => item.url).sort(), [admin, chief, otherManager].sort());
+});
+
+for (const nextRole of ['member', 'manager']) test(`chief push scope immediately shrinks after demotion to ${nextRole}`, async (t) => {
+  const f = await createFixture(t); await configure(f);
+  f.sqlite.exec("UPDATE users SET role = 'chief' WHERE id = 4");
+  addSubscription(f, 4);
+  const otherGroupOrder = f.addOrder();
+  f.sqlite.prepare('UPDATE users SET role = ? WHERE id = 4').run(nextRole);
+  await notifyOrder(f.env, otherGroupOrder);
+  assert.equal(globalThis.fetch.mock.callCount(), 0);
+  if (nextRole === 'manager') {
+    t.mock.method(globalThis, 'fetch', async () => new Response(null, { status: 201 }));
+    await notifyOrder(f.env, f.addOrder({ userId: 5 }));
+    assert.equal(globalThis.fetch.mock.callCount(), 1);
+  }
 });
 
 for (const invalidation of ['logout', 'expired', 'disabled', 'demoted', 'moved', 'old-key', 'order-cleared']) {

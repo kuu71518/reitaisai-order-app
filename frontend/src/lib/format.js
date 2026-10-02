@@ -38,7 +38,7 @@ export function formatDateTime(value) {
 export function getOrderStatus(status) {
   if (status === 'ordered') return { label: '注文済み', tone: 'success' };
   if (status === 'cancelled') return { label: '取消済み', tone: 'muted' };
-  return { label: '担当者が確認中', tone: 'warning' };
+  return { label: '確認中', tone: 'warning' };
 }
 
 export function orderTotal(order) {

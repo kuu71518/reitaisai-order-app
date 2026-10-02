@@ -1,13 +1,16 @@
 import { useState } from 'react';
 import useSWR from 'swr';
 import { apiFetcher } from '../lib/api';
-import { canManageOrders } from '../lib/orderAccess';
+import { canManageOrders, canReceiveOrderNotifications } from '../lib/orderAccess';
 
 export function useManagerOrders(currentUser, onOrders) {
-  const isManager = canManageOrders(currentUser);
-  const userScope = isManager ? JSON.stringify([currentUser.id, currentUser.group_id, currentUser.role]) : null;
-  const key = isManager
-    ? ['/api/manager/orders?status=pending', userScope]
+  const receivesNotifications = canReceiveOrderNotifications(currentUser);
+  const userScope = receivesNotifications ? JSON.stringify([currentUser.id, currentUser.group_id, currentUser.role]) : null;
+  // Chiefs/admins share their handoff poll with notifications. Managers poll
+  // only IDs, so their browser never receives individual handoff information.
+  const url = canManageOrders(currentUser) ? '/api/manager/orders?status=pending' : '/api/notifications/orders';
+  const key = receivesNotifications
+    ? [url, userScope]
     : null;
   const [lastUpdate, setLastUpdate] = useState({ key: null, value: null });
 

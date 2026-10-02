@@ -12,7 +12,7 @@ import PushNotificationSettings from './components/PushNotificationSettings';
 import { LoadingState, StatusNotice } from './components/States';
 import { useManagerOrders } from './hooks/useManagerOrders';
 import { ApiError, apiRequest, clearSessionToken, loadSession } from './lib/api';
-import { canManageOrders, collectOrderNotifications, getNavItems } from './lib/orderAccess';
+import { canManageOrders, canReceiveOrderNotifications, collectOrderNotifications, getNavItems } from './lib/orderAccess';
 
 const LEGACY_USER_KEY = 'reitaisai_app_user';
 const ACTIVE_TAB_KEY = 'reitaisai_active_tab';
@@ -110,7 +110,7 @@ export default function App() {
     const toast = {
       id: Date.now(),
       title: count > 1 ? `${count}件の新しい注文` : '新しい注文があります',
-      body: '担当者画面を開いて内容を確認してください。',
+      body: canManageOrders(currentUserRef.current) ? '取りまとめを開いて内容を確認してください。' : '担当グループの合計を確認してください。',
     };
 
     setLatestToast(toast);
@@ -226,8 +226,8 @@ export default function App() {
 
   useEffect(() => {
     const openOrders = (event) => {
-      if (event.data?.type !== 'OPEN_MANAGER_ORDERS' || !canManageOrders(currentUser) || orderBusy) return;
-      setActiveTab('manager');
+      if (event.data?.type !== 'OPEN_MANAGER_ORDERS' || !canReceiveOrderNotifications(currentUser) || orderBusy) return;
+      setActiveTab(canManageOrders(currentUser) ? 'manager' : 'summary');
       setLatestToast(null);
       setUnreadCount(0);
     };
@@ -332,13 +332,15 @@ export default function App() {
 
   const navItems = getNavItems(currentUser);
   const userContextKey = `${currentUser.id}:${currentUser.group_id}:${currentUser.role}`;
-  const safeActiveTab = navItems.some((item) => item.id === activeTab) ? activeTab : 'menu';
+  const notificationTab = canManageOrders(currentUser) ? 'manager' : 'summary';
+  const safeActiveTab = navItems.some((item) => item.id === activeTab) ? activeTab
+    : activeTab === 'manager' && canReceiveOrderNotifications(currentUser) ? 'summary' : 'menu';
   const handleNavigate = (tab) => {
     if (orderBusy) return;
     if (tab === 'menu') setOrderView('menu');
     setActiveTab(tab);
     setLatestToast(null);
-    if (tab === 'manager') setUnreadCount(0);
+    if (tab === notificationTab) setUnreadCount(0);
   };
   const handleOrderView = (nextView) => {
     const user = currentUserRef.current;
@@ -396,12 +398,12 @@ export default function App() {
           </div>
         </div>
         <div className="top-actions">
-          {canManageOrders(currentUser) && (
+          {canReceiveOrderNotifications(currentUser) && (
             <button
               type="button"
               className="icon-text-button"
-              onClick={() => handleNavigate('manager')}
-              aria-label={unreadCount > 0 ? `新しい注文が${unreadCount}件あります` : '担当者画面を開く'}
+              onClick={() => handleNavigate(notificationTab)}
+              aria-label={unreadCount > 0 ? `新しい注文が${unreadCount}件あります` : canManageOrders(currentUser) ? '取りまとめを開く' : '会計と新着を確認'}
             >
               <span aria-hidden="true">🔔</span>
               <span className="desktop-only">新着</span>
@@ -435,7 +437,7 @@ export default function App() {
             </button>
           ))}
         </nav>
-        <p className="side-note">注文は席の担当者へ届きます。担当者がまとめて店員へ伝えます。</p>
+        <p className="side-note">注文は席の担当者と主任・管理者へ届きます。主任・管理者が取りまとめて店員へ伝えます。</p>
       </aside>
 
       <main className="main-stage" id="main-content" ref={mainRef} tabIndex={-1}>
@@ -445,15 +447,15 @@ export default function App() {
         </div>
         <div className="app-guidance">
           <VenueGuide compact />
-          {canManageOrders(currentUser) && <PushNotificationSettings key={userContextKey} currentUser={currentUser} />}
+          {canReceiveOrderNotifications(currentUser) && <PushNotificationSettings key={userContextKey} currentUser={currentUser} />}
         </div>
-        {canManageOrders(currentUser) && unreadCount > 0 && safeActiveTab !== 'manager' && (
+        {canReceiveOrderNotifications(currentUser) && unreadCount > 0 && safeActiveTab !== notificationTab && (
           <StatusNotice
             tone="warning"
             title={`${unreadCount}件の新しい注文があります`}
-            action={<button type="button" className="small-button" onClick={() => handleNavigate('manager')}>担当者画面を開く</button>}
+            action={<button type="button" className="small-button" onClick={() => handleNavigate(notificationTab)}>{canManageOrders(currentUser) ? '取りまとめを開く' : '会計を確認'}</button>}
           >
-            「取りまとめ」で内容を確認してください。
+            {canManageOrders(currentUser) ? '「取りまとめ」で内容を確認してください。' : '「会計」で担当グループの合計を確認してください。'}
           </StatusNotice>
         )}
         <div hidden={!['menu', 'history'].includes(safeActiveTab)}>
@@ -488,7 +490,7 @@ export default function App() {
             <strong>{latestToast.title}</strong>
             <span>{latestToast.body}</span>
           </div>
-          <button type="button" onClick={() => handleNavigate('manager')}>注文を確認</button>
+          <button type="button" onClick={() => handleNavigate(notificationTab)}>{canManageOrders(currentUser) ? '注文を確認' : '会計を確認'}</button>
           <button type="button" className="toast-close" onClick={() => setLatestToast(null)} aria-label="通知を閉じる">×</button>
         </div>
       )}

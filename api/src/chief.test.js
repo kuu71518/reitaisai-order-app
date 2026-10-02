@@ -29,7 +29,7 @@ test('chief migration preserves existing users, orders, sessions, push subscript
   assert.throws(() => f.sqlite.exec("UPDATE users SET role = 'admin' WHERE id = 3"), /UNIQUE/);
 });
 
-test('chief reads all accounting rows but cannot access manager, push, or admin operations', async (t) => {
+test('chief reads all accounting rows and manager/notification settings but cannot access admin operations', async (t) => {
   const f = await createFixture(t);
   f.sqlite.exec("UPDATE users SET role = 'chief' WHERE id = 4");
   const order = f.addOrder();
@@ -39,16 +39,17 @@ test('chief reads all accounting rows but cannot access manager, push, or admin 
   assert.equal(summary.data.length, 5);
   assert.equal(summary.data.reduce((sum, row) => sum + row.total_price, 0), 900);
   assert.equal(summary.data.find((row) => row.user_id === 1).total_price, 0);
-  for (const path of ['/api/manager/orders', '/api/admin/users', '/api/admin/stats', '/api/admin/logs', '/api/admin/menu', '/api/admin/order-history/preview', '/api/notifications/config']) {
+  for (const path of ['/api/manager/orders', '/api/notifications/config']) assert.equal((await f.request(4, path)).status, 200, path);
+  for (const path of ['/api/admin/users', '/api/admin/stats', '/api/admin/logs', '/api/admin/menu', '/api/admin/order-history/preview']) {
     assert.equal((await f.request(4, path)).status, 403, path);
   }
   for (const [path, method, body] of [
-    [`/api/manager/orders/${order}/quantity`, 'PATCH', { quantity: 2 }],
-    ['/api/manager/orders/status', 'PATCH', { order_ids: [order], status: 'ordered' }],
     ['/api/admin/users/3', 'PATCH', { role: 'chief', group_id: 'テスト席A' }],
     ['/api/admin/order-history/clear', 'POST', {}],
-    ['/api/notifications/subscriptions', 'POST', {}],
   ]) assert.equal((await f.request(4, path, { method, body })).status, 403, path);
+  assert.equal((await f.request(4, `/api/manager/orders/${order}/quantity`, { method: 'PATCH', body: { quantity: 2 } })).status, 200);
+  assert.equal((await f.request(4, '/api/manager/orders/status', { method: 'PATCH', body: { order_ids: [order], status: 'ordered' } })).status, 200);
+  assert.equal((await f.request(4, '/api/notifications/subscriptions', { method: 'POST', body: {} })).status, 503);
   assert.equal((await f.request(4, '/api/orders', { method: 'POST', body: { menu_item_id: 1, quantity: 1, request_id: 'chief_self_order_request_01' } })).status, 200);
 });
 

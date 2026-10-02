@@ -3,12 +3,14 @@ import assert from 'node:assert/strict';
 import { canCancelOrder, cancellationBody } from './orderCancellation.js';
 
 const order = { id: 3, user_id: 8, group_id: 'A', status: 'pending', cancel_snapshot_token: 's'.repeat(43) };
-test('pending cancellation distinguishes owner, group manager and chief accounting scope', () => {
+test('pending cancellation permits owners and all-group chiefs while managers cannot change another person’s order', () => {
   assert.equal(canCancelOrder({ id: 8, role: 'member' }, order), true);
   assert.equal(canCancelOrder({ id: 9, role: 'member', group_id: 'A' }, order), false);
-  assert.equal(canCancelOrder({ id: 9, role: 'manager', group_id: 'A' }, order), true);
+  assert.equal(canCancelOrder({ id: 9, role: 'manager', group_id: 'A' }, order), false);
+  assert.equal(canCancelOrder({ id: 8, role: 'manager', group_id: 'A' }, order), true);
   assert.equal(canCancelOrder({ id: 9, role: 'manager', group_id: 'B' }, order), false);
-  assert.equal(canCancelOrder({ id: 9, role: 'chief', group_id: 'A' }, order), false);
+  assert.equal(canCancelOrder({ id: 9, role: 'chief', group_id: 'A' }, order), true);
+  assert.equal(canCancelOrder({ id: 9, role: 'chief', group_id: 'B' }, order), true);
   assert.equal(canCancelOrder({ id: 8, role: 'chief', group_id: 'B' }, order), true);
   assert.equal(canCancelOrder({ id: 9, role: 'admin' }, order), true);
 });

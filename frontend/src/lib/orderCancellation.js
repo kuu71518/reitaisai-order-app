@@ -3,8 +3,7 @@ export function canCancelOrder(user, order) {
   if (!['pending', 'ordered'].includes(order.status)) return false;
   if (user.role === 'admin') return true;
   if (order.status !== 'pending') return false;
-  return Number(user.id) > 0 && (Number(user.id) === Number(order.user_id)
-    || (user.role === 'manager' && Boolean(user.group_id) && user.group_id === order.group_id));
+  return Number(user.id) > 0 && (user.role === 'chief' || Number(user.id) === Number(order.user_id));
 }
 
 export function cancellationBody(order, reason, restaurantConfirmed) {

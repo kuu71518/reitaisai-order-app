@@ -415,7 +415,7 @@ export default function AdminDashboard({ currentUser, onOrderHistoryCleared }) {
 
     const statusLabel = selectedAdminOrderIsImmediate
       ? '注文済みとして事前加算'
-      : '担当者の確認待ちとして追加';
+      : '主任・管理者の確認待ちとして追加';
     if (!window.confirm(`${selectedAdminOrderUser.name}さんへ「${selectedAdminOrderMenu.name}」を${quantity}点、${statusLabel}しますか？`)) return;
 
     setAdminOrderState({ busy: true, error: '' });
@@ -438,7 +438,7 @@ export default function AdminDashboard({ currentUser, onOrderHistoryCleared }) {
         title: `${selectedAdminOrderUser.name}さんへ注文を追加しました。`,
         message: selectedAdminOrderIsImmediate
           ? '利用者の注文履歴には「管理者が事前に追加」と表示され、金額へ加算されます。'
-          : '担当者が店員へ伝える注文として追加されました。',
+          : '主任・管理者が店員へ伝える注文として追加されました。',
       });
       await fetchData({ tabId: 'orders' });
     } catch (error) {
@@ -709,7 +709,7 @@ export default function AdminDashboard({ currentUser, onOrderHistoryCleared }) {
         </div>
 
         <StatusNotice tone="info" title="宴会コースはそのまま会計へ加算されます">
-          宴会コースは事前に店へ伝えてあるため「注文済み」で追加します。それ以外は担当者の確認待ちになります。
+          宴会コースは事前に店へ伝えてあるため「注文済み」で追加します。それ以外は主任・管理者の確認待ちになります。
         </StatusNotice>
 
         <form className="admin-form" onSubmit={addOrderForUser} aria-busy={adminOrderState.busy}>

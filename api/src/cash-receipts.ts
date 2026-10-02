@@ -56,6 +56,17 @@ export async function readAccounting(env: Bindings, groupId?: string) {
   return Promise.all(results.map(accountingPublicRow));
 }
 
+// Managers receive only their assigned group's aggregate, never individual
+// accounting rows, receipt states or receipt mutation tokens.
+export async function readGroupAccountingTotal(env: Bindings, groupId: string) {
+  const { results } = await env.DB.prepare(`
+    SELECT ? AS group_id, COALESCE(SUM(o.unit_price_snapshot * o.quantity), 0) AS total_price
+    FROM orders o JOIN users u ON u.id = o.user_id
+    WHERE u.group_id = ? AND o.status != 'cancelled'
+  `).bind(groupId, groupId).all<{ group_id: string; total_price: number }>();
+  return results;
+}
+
 export async function readCashReceipt(env: Bindings, userId: number) {
   return env.DB.prepare(`${ACCOUNTING_SQL} AND u.id = ?`).bind(userId).first<AccountingRow>();
 }

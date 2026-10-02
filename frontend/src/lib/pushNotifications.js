@@ -16,7 +16,7 @@ export function subscriptionUsesKey(subscription, publicKey) {
 export function registerPushEvents(worker) {
   worker.addEventListener('push', (event) => {
     event.waitUntil(worker.registration.showNotification('新しい注文があります', {
-      body: '「取りまとめ」で内容を確認してください。',
+      body: 'アプリを開いて新着を確認してください。',
       icon: '/icon-192.png', badge: '/icon-192.png', tag: 'pending-orders', renotify: true,
     }));
   });

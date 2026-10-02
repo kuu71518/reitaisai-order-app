@@ -56,7 +56,7 @@ const RECIPIENTS_SQL = `
   JOIN orders o ON o.id = ? AND o.status = 'pending'
   JOIN users sender ON sender.id = o.user_id
   WHERE recipient.is_active = 1 AND recipient.discord_id_hmac IS NOT NULL
-    AND (recipient.role = 'admin' OR (recipient.role = 'manager' AND recipient.group_id = sender.group_id))
+    AND (recipient.role IN ('admin', 'chief') OR (recipient.role = 'manager' AND recipient.group_id = sender.group_id))
     AND s.revoked_at IS NULL AND s.idle_expires_at > ? AND s.absolute_expires_at > ?
     AND p.application_server_key = ?
 `;

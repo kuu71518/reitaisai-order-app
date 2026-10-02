@@ -59,12 +59,11 @@ test('zero-yen participants can be marked received without adding the table char
   assert.equal(after.cash_received, true);
 });
 
-test('managers see receipt data only within their group, while members cannot see or change it', async (t) => {
+test('managers receive only the group total without receipt data, while members cannot see or change accounting', async (t) => {
   const f = await createFixture(t); f.addOrder();
   const token = (await person(f)).cash_receipt_snapshot_token;
   assert.equal((await record(f, 3, token)).status, 200);
-  assert.equal((await person(f, 3, 2)).cash_received, true);
-  assert.equal(await person(f, 4, 2), undefined);
+  assert.deepEqual((await (await f.request(2, '/api/orders/summary')).json()).data, [{ group_id: 'テスト席A', total_price: 300 }]);
   for (const actor of [2, 3, 5]) assert.equal((await record(f, 3, token, false, actor)).status, 403);
   assert.equal((await f.request(3, '/api/orders/summary')).status, 403);
   assert.equal(audits(f).length, 1);

@@ -34,8 +34,7 @@ export async function readCancellationOrder(env: Bindings, id: number) {
 }
 
 export function canAccessCancellation(user: SessionUser, order: CancellationOrder) {
-  return user.role === 'admin' || user.id === order.user_id
-    || (user.role === 'manager' && user.group_id === order.group_id);
+  return user.role === 'admin' || user.role === 'chief' || user.id === order.user_id;
 }
 
 export async function cancelOrder(env: Bindings, actor: SessionUser, order: CancellationOrder, reason: string, restaurantConfirmed: boolean) {
@@ -49,8 +48,7 @@ export async function cancelOrder(env: Bindings, actor: SessionUser, order: Canc
         AND EXISTS (
           SELECT 1 FROM users actor WHERE actor.id = ? AND actor.is_active = 1
             AND (actor.role = 'admin' OR (o.status = 'pending' AND (
-              actor.id = o.user_id OR (actor.role = 'manager'
-                AND actor.group_id = (SELECT group_id FROM users WHERE id = o.user_id))
+              actor.role = 'chief' OR actor.id = o.user_id
             )))
         )
     `).bind(now, actor.id, reason, now, order.id, order.cancel_snapshot, actor.id),

@@ -10,7 +10,7 @@ const request = (f, actor, id, snapshot, patch = {}, options = {}) => f.request(
   method: 'POST', body: { snapshot_token: snapshot, reason: '入力間違いのため', ...patch }, ...options,
 });
 
-for (const [actor, owner] of [[3, 3], [2, 3], [1, 4], [4, 4]]) {
+for (const [actor, owner] of [[3, 3], [2, 2], [1, 4], [4, 4], [4, 3]]) {
   test(`pending cancellation: actor ${actor} can cancel user ${owner} within their scope, with atomic audit and retained history`, async (t) => {
     const f = await createFixture(t);
     if (actor === 4) f.sqlite.exec("UPDATE users SET role = 'chief' WHERE id = 4");
@@ -39,11 +39,10 @@ for (const [actor, owner] of [[3, 3], [2, 3], [1, 4], [4, 4]]) {
   });
 }
 
-test('unrelated member, other-group manager and chief cannot cancel another person’s order', async (t) => {
+test('unrelated member and any manager cannot cancel another person’s order', async (t) => {
   const f = await createFixture(t);
-  f.sqlite.exec("UPDATE users SET role = 'chief' WHERE id = 4");
   const id = f.addOrder(); const snapshot = await token(f, id);
-  for (const actor of [4, 5]) assert.equal((await request(f, actor, id, snapshot)).status, 404);
+  for (const actor of [2, 4, 5]) assert.equal((await request(f, actor, id, snapshot)).status, 404);
   const second = f.addOrder({ userId: 4 });
   assert.equal((await request(f, 3, second, await token(f, second))).status, 404);
   assert.ok(f.rows('orders').every((order) => order.status === 'pending'));
@@ -51,9 +50,11 @@ test('unrelated member, other-group manager and chief cannot cancel another pers
 
 test('ordered cancellation requires an admin, an explicit restaurant confirmation and a reason, including the legacy admin route', async (t) => {
   const f = await createFixture(t);
+  f.sqlite.exec("UPDATE users SET role = 'chief' WHERE id = 4");
   const id = f.addOrder({ status: 'ordered', source: 'admin' });
   const snapshot = await token(f, id, 'ordered');
-  for (const actor of [2, 3]) assert.equal((await request(f, actor, id, snapshot, { restaurant_confirmed: true })).status, 403);
+  for (const actor of [3, 4]) assert.equal((await request(f, actor, id, snapshot, { restaurant_confirmed: true })).status, 403);
+  assert.equal((await request(f, 2, id, snapshot, { restaurant_confirmed: true })).status, 404);
   for (const patch of [{}, { restaurant_confirmed: 'true' }, { restaurant_confirmed: true, reason: '' }]) {
     assert.equal((await request(f, 1, id, snapshot, patch)).status, 422);
   }
@@ -91,19 +92,34 @@ test('a stale snapshot detects a same-second quantity edit and a pending to orde
 
 for (const change of ['quantity', 'handoff', 'actor-role', 'group']) {
   test(`cancellation checks ${change} again inside the write transaction`, async (t) => {
-    const f = await createFixture(t); const id = f.addOrder(); const snapshot = await token(f, id);
+    const f = await createFixture(t);
+    f.sqlite.exec("UPDATE users SET role = 'chief' WHERE id = 4");
+    const id = f.addOrder(); const snapshot = await token(f, id);
     f.activity.beforeBatch = () => {
       f.activity.beforeBatch = null;
       if (change === 'quantity') f.sqlite.prepare('UPDATE orders SET quantity = 2 WHERE id = ?').run(id);
       if (change === 'handoff') f.sqlite.prepare("UPDATE orders SET status = 'ordered' WHERE id = ?").run(id);
-      if (change === 'actor-role') f.sqlite.exec("UPDATE users SET role = 'chief' WHERE id = 2");
+      if (change === 'actor-role') f.sqlite.exec("UPDATE users SET role = 'manager' WHERE id = 4");
       if (change === 'group') f.sqlite.exec("UPDATE users SET group_id = '別のテスト席' WHERE id = 3");
     };
-    assert.equal((await request(f, 2, id, snapshot)).status, 409);
+    assert.equal((await request(f, 4, id, snapshot)).status, 409);
     assert.equal(f.rows('orders')[0].status, change === 'handoff' ? 'ordered' : 'pending');
     assert.equal(f.rows('audit_logs').length, 0);
   });
 }
+
+test('chief cancellation rechecks demotion inside the write transaction before changing another group order', async (t) => {
+  const f = await createFixture(t);
+  f.sqlite.exec("UPDATE users SET role = 'chief' WHERE id = 4");
+  const id = f.addOrder(); const snapshot = await token(f, id);
+  f.activity.beforeBatch = () => {
+    f.activity.beforeBatch = null;
+    f.sqlite.exec("UPDATE users SET role = 'manager' WHERE id = 4");
+  };
+  assert.equal((await request(f, 4, id, snapshot)).status, 409);
+  assert.equal(f.rows('orders')[0].status, 'pending');
+  assert.equal(f.rows('audit_logs').length, 0);
+});
 
 test('failed audit rolls back the cancellation', async (t) => {
   const f = await createFixture(t); const id = f.addOrder(); const snapshot = await token(f, id);

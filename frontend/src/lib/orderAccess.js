@@ -1,13 +1,22 @@
 export function canManageOrders(user) {
-  return user?.role === 'manager' || user?.role === 'admin';
+  return user?.role === 'chief' || user?.role === 'admin';
+}
+
+export function canReceiveOrderNotifications(user) {
+  return user?.role === 'manager' || canManageOrders(user);
 }
 
 export function canViewAccounting(user) {
-  return canManageOrders(user) || user?.role === 'chief';
+  return user?.role === 'manager' || canManageOrders(user);
 }
 
-export function canViewAllAccounting(user) {
+export function canManageAllGroups(user) {
   return user?.role === 'chief' || user?.role === 'admin';
+}
+
+export function canViewAllAccounting(user, responseScope) {
+  // A changed server role must narrow an already-open chief/admin screen too.
+  return canManageAllGroups(user) && (responseScope === undefined || responseScope === 'all_groups');
 }
 
 export function getNavItems(user) {
@@ -38,7 +47,7 @@ export function collectOrderNotifications(previousIds, orders) {
 export function groupPendingOrders(orders, quantityDrafts = {}) {
   const groups = new Map();
   for (const order of orders) {
-    // Administrators see every group. Keep each table's handoff separate.
+    // Administrators and chiefs see every group. Keep each table's handoff separate.
     const key = JSON.stringify([order.group_id, order.menu_name, order.size]);
     if (!groups.has(key)) groups.set(key, {
       key, groupId: order.group_id, menuName: order.menu_name, size: order.size, total: 0, items: [],

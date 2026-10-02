@@ -24,7 +24,7 @@ test('秒・ミリ秒・UTC文字列を同じ日時として解釈する', () =>
 test('注文状態を利用者向け表示へ変換する', () => {
   assert.deepEqual(getOrderStatus('ordered'), { label: '注文済み', tone: 'success' });
   assert.deepEqual(getOrderStatus('cancelled'), { label: '取消済み', tone: 'muted' });
-  assert.deepEqual(getOrderStatus('unknown'), { label: '担当者が確認中', tone: 'warning' });
+  assert.deepEqual(getOrderStatus('unknown'), { label: '確認中', tone: 'warning' });
 });
 
 test('注文合計は単価の旧・新フィールドに対応する', () => {

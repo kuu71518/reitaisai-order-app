@@ -1,23 +1,30 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canManageOrders, canViewAccounting, canViewAllAccounting, collectOrderNotifications, getNavItems, groupPendingOrders } from './orderAccess.js';
+import { canManageOrders, canManageAllGroups, canReceiveOrderNotifications, canViewAccounting, canViewAllAccounting, collectOrderNotifications, getNavItems, groupPendingOrders } from './orderAccess.js';
 
-test('admin gets manager navigation and polling eligibility plus the admin screen', () => {
+test('admin gets handoff navigation; managers get own-group accounting and notifications without handoff actions', () => {
   assert.equal(canManageOrders({ role: 'admin' }), true);
-  assert.equal(canManageOrders({ role: 'manager' }), true);
+  assert.equal(canManageOrders({ role: 'manager' }), false);
+  assert.equal(canReceiveOrderNotifications({ role: 'manager' }), true);
+  assert.equal(canReceiveOrderNotifications({ role: 'admin' }), true);
   assert.deepEqual(getNavItems({ role: 'admin' }).map((item) => item.id), ['menu', 'history', 'manager', 'summary', 'admin']);
-  assert.deepEqual(getNavItems({ role: 'manager' }).map((item) => item.id), ['menu', 'history', 'manager', 'summary']);
+  assert.deepEqual(getNavItems({ role: 'manager' }).map((item) => item.id), ['menu', 'history', 'summary']);
   for (const user of [null, { role: 'member' }, { role: 'unknown' }]) {
     assert.equal(canManageOrders(user), false);
+    assert.equal(canReceiveOrderNotifications(user), false);
     assert.deepEqual(getNavItems(user).map((item) => item.id), ['menu', 'history']);
   }
 });
-test('chief can view all accounting without manager actions, notifications, or admin navigation', () => {
+test('chief inherits order management and notification eligibility for every group, plus all accounting without admin navigation', () => {
   const chief = { role: 'chief' };
-  assert.equal(canManageOrders(chief), false);
+  assert.equal(canManageOrders(chief), true);
+  assert.equal(canReceiveOrderNotifications(chief), true);
+  assert.equal(canManageAllGroups(chief), true);
   assert.equal(canViewAccounting(chief), true);
   assert.equal(canViewAllAccounting(chief), true);
-  assert.deepEqual(getNavItems(chief).map((item) => item.id), ['menu', 'history', 'summary']);
+  assert.deepEqual(getNavItems(chief).map((item) => item.id), ['menu', 'history', 'manager', 'summary']);
+  assert.equal(canManageAllGroups({ role: 'manager' }), false);
+  assert.equal(canManageAllGroups({ role: 'admin' }), true);
   assert.equal(canViewAccounting({ role: 'manager' }), true);
   assert.equal(canViewAllAccounting({ role: 'manager' }), false);
   assert.equal(canViewAccounting({ role: 'admin' }), true);
@@ -25,8 +32,19 @@ test('chief can view all accounting without manager actions, notifications, or a
   for (const user of [null, { role: 'member' }, { role: 'unknown' }]) {
     assert.equal(canViewAccounting(user), false);
     assert.equal(canViewAllAccounting(user), false);
+    assert.equal(canManageAllGroups(user), false);
   }
 });
+test('accounting respects the current response scope when an already-open chief screen is narrowed to a manager', () => {
+  for (const role of ['chief', 'admin']) {
+    assert.equal(canViewAllAccounting({ role }, 'all_groups'), true);
+    assert.equal(canViewAllAccounting({ role }, 'assigned_group'), false);
+    assert.equal(canViewAllAccounting({ role }, 'unknown'), false);
+  }
+  assert.equal(canViewAllAccounting({ role: 'manager' }, 'all_groups'), false);
+  assert.equal(canViewAllAccounting({ role: 'member' }, 'all_groups'), false);
+});
+
 test('new-order notifications ignore the initial baseline and repeated polls but count newly arrived orders once', () => {
   const baseline = collectOrderNotifications(null, [{ id: 1 }]);
   assert.equal(baseline.newCount, 0);

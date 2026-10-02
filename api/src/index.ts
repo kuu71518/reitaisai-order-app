@@ -22,7 +22,7 @@ import type { AppEnv, AuthContext, Bindings, SessionUser, UserRole } from './typ
 import { clearOrderHistory, ORDER_HISTORY_CONFIRMATION, readOrderHistory } from './order-history.ts';
 import { allowedPushEndpoint, getPushConfig, notifyOrder } from './push.ts';
 import { CANCEL_SNAPSHOT_SQL, canAccessCancellation, cancelOrder, readCancellationOrder, withCancelTokens } from './order-cancellation.ts';
-import { CASH_HISTORY_SNAPSHOT_SQL, readAccounting, readCashReceipt, writeCashReceipt } from './cash-receipts.ts';
+import { CASH_HISTORY_SNAPSHOT_SQL, readAccounting, readGroupAccountingTotal, readCashReceipt, writeCashReceipt } from './cash-receipts.ts';
 
 // Keep this browser signed in for at most 30 days after Discord authentication.
 // Activity must not extend that deadline or refresh the administrator auth time.
@@ -568,14 +568,29 @@ app.get('/api/menu', async (c) => {
 });
 
 app.get('/api/notifications/config', (c) => {
-  const roleError = requireRole(c, ['manager', 'admin']);
+  const roleError = requireRole(c, ['manager', 'chief', 'admin']);
   if (roleError) return roleError;
   const config = getPushConfig(c.env);
   return c.json({ success: true, data: { configured: Boolean(config), public_key: config?.publicKey || null } });
 });
 
+app.get('/api/notifications/orders', async (c) => {
+  const roleError = requireRole(c, ['manager', 'chief', 'admin']);
+  if (roleError) return roleError;
+  const auth = c.get('auth');
+  const allGroups = auth.user.role === 'admin' || auth.user.role === 'chief';
+  // Notification polling exposes IDs only. Managers cannot retrieve the
+  // handoff list or other participants' order details through this endpoint.
+  const { results } = await c.env.DB.prepare(`
+    SELECT o.id FROM orders o JOIN users u ON u.id = o.user_id
+    WHERE o.status = 'pending' AND (? = 1 OR u.group_id = ?)
+    ORDER BY o.created_at, o.id
+  `).bind(allGroups ? 1 : 0, auth.user.group_id).all<{ id: number }>();
+  return c.json({ success: true, data: results });
+});
+
 app.post('/api/notifications/subscriptions', async (c) => {
-  const roleError = requireRole(c, ['manager', 'admin']);
+  const roleError = requireRole(c, ['manager', 'chief', 'admin']);
   if (roleError) return roleError;
   const config = getPushConfig(c.env);
   if (!config) return fail(c, 503, 'プッシュ通知の公開設定が完了していません。', 'PUSH_NOT_CONFIGURED');
@@ -602,7 +617,7 @@ app.post('/api/notifications/subscriptions', async (c) => {
 });
 
 app.delete('/api/notifications/subscriptions', async (c) => {
-  const roleError = requireRole(c, ['manager', 'admin']);
+  const roleError = requireRole(c, ['manager', 'chief', 'admin']);
   if (roleError) return roleError;
   const body = await readJsonObject(c);
   if (!allowedPushEndpoint(body?.endpoint)) return fail(c, 422, '通知の登録情報が正しくありません。');
@@ -683,13 +698,13 @@ app.get('/api/orders/mine', async (c) => {
 });
 
 app.get('/api/manager/orders', async (c) => {
-  const roleError = requireRole(c, ['manager', 'admin']);
+  const roleError = requireRole(c, ['chief', 'admin']);
   if (roleError) return roleError;
   const auth = c.get('auth');
   const requestedStatus = c.req.query('status') || 'pending';
   if (!isOrderStatus(requestedStatus)) return fail(c, 422, '注文状態が正しくありません。');
 
-  const isAdmin = auth.user.role === 'admin';
+  const allGroups = auth.user.role === 'admin' || auth.user.role === 'chief';
   const sql = `
     SELECT
       o.id,
@@ -704,11 +719,11 @@ app.get('/api/manager/orders', async (c) => {
       ${CANCEL_SNAPSHOT_SQL} AS cancel_snapshot
     FROM orders o
     JOIN users u ON u.id = o.user_id
-    WHERE o.status = ? ${isAdmin ? '' : 'AND u.group_id = ?'}
+    WHERE o.status = ? ${allGroups ? '' : 'AND u.group_id = ?'}
     ORDER BY o.created_at, o.id
   `;
   const statement = c.env.DB.prepare(sql);
-  const { results } = isAdmin
+  const { results } = allGroups
     ? await statement.bind(requestedStatus).all()
     : await statement.bind(requestedStatus, auth.user.group_id).all();
   return c.json({ success: true, data: await withCancelTokens(results) });
@@ -743,7 +758,7 @@ async function handleOrderCancellation(c: Context<AppEnv>) {
 app.post('/api/orders/:id/cancel', handleOrderCancellation);
 
 app.patch('/api/manager/orders/:id/quantity', async (c) => {
-  const roleError = requireRole(c, ['manager', 'admin']);
+  const roleError = requireRole(c, ['chief', 'admin']);
   if (roleError) return roleError;
   const auth = c.get('auth');
   const orderId = parsePositiveInteger(c.req.param('id'));
@@ -751,15 +766,15 @@ app.patch('/api/manager/orders/:id/quantity', async (c) => {
   const quantity = body ? parsePositiveInteger(body.quantity, 20) : null;
   if (!orderId || !quantity) return fail(c, 422, '注文番号と個数を確認してください。');
 
-  const isAdmin = auth.user.role === 'admin';
+  const allGroups = auth.user.role === 'admin' || auth.user.role === 'chief';
   const sql = `
     UPDATE orders
     SET quantity = ?, updated_at = ?
     WHERE id = ? AND status = 'pending'
-    ${isAdmin ? '' : 'AND EXISTS (SELECT 1 FROM users u WHERE u.id = orders.user_id AND u.group_id = ?)'}
+    ${allGroups ? '' : 'AND EXISTS (SELECT 1 FROM users u WHERE u.id = orders.user_id AND u.group_id = ?)'}
   `;
   const statement = c.env.DB.prepare(sql);
-  const result = isAdmin
+  const result = allGroups
     ? await statement.bind(quantity, nowSeconds(), orderId).run()
     : await statement.bind(quantity, nowSeconds(), orderId, auth.user.group_id).run();
   if (result.meta.changes !== 1) return fail(c, 404, '変更できる注文が見つかりません。');
@@ -769,7 +784,7 @@ app.patch('/api/manager/orders/:id/quantity', async (c) => {
 });
 
 app.patch('/api/manager/orders/status', async (c) => {
-  const roleError = requireRole(c, ['manager', 'admin']);
+  const roleError = requireRole(c, ['chief', 'admin']);
   if (roleError) return roleError;
   const auth = c.get('auth');
   const body = await readJsonObject(c);
@@ -783,16 +798,16 @@ app.patch('/api/manager/orders/status', async (c) => {
   if (ids.length !== rawIds.length) return fail(c, 422, '注文番号が正しくありません。');
 
   const placeholders = ids.map(() => '?').join(',');
-  const isAdmin = auth.user.role === 'admin';
+  const allGroups = auth.user.role === 'admin' || auth.user.role === 'chief';
   const sql = `
     UPDATE orders
     SET status = 'ordered', manager_memo = ?, ordered_at = ?, updated_at = ?
     WHERE id IN (${placeholders}) AND status = 'pending'
-    ${isAdmin ? '' : 'AND EXISTS (SELECT 1 FROM users u WHERE u.id = orders.user_id AND u.group_id = ?)'}
+    ${allGroups ? '' : 'AND EXISTS (SELECT 1 FROM users u WHERE u.id = orders.user_id AND u.group_id = ?)'}
   `;
   const now = nowSeconds();
   const bindings: unknown[] = [memo, now, now, ...ids];
-  if (!isAdmin) bindings.push(auth.user.group_id);
+  if (!allGroups) bindings.push(auth.user.group_id);
   const result = await c.env.DB.prepare(sql).bind(...bindings).run();
   if (result.meta.changes === 0) return fail(c, 404, '変更できる注文が見つかりません。');
 
@@ -808,7 +823,8 @@ app.get('/api/orders/summary', async (c) => {
   if (roleError) return roleError;
   const auth = c.get('auth');
   const allGroups = auth.user.role === 'admin' || auth.user.role === 'chief';
-  return c.json({ success: true, data: await readAccounting(c.env, allGroups ? undefined : auth.user.group_id) });
+  const data = allGroups ? await readAccounting(c.env) : await readGroupAccountingTotal(c.env, auth.user.group_id);
+  return c.json({ success: true, scope: allGroups ? 'all_groups' : 'assigned_group', data });
 });
 
 app.post('/api/accounting/users/:id/cash-receipt', async (c) => {

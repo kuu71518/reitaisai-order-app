@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { apiRequest, getErrorMessage } from '../lib/api';
 import { formatTime } from '../lib/format';
 import { groupOrdersForHandoff } from '../lib/managerOrderGroups';
+import { canManageAllGroups } from '../lib/orderAccess';
 import { EmptyState, LoadingState, ScreenIntro, StatusNotice } from './States';
 import ConfirmDialog from './ConfirmDialog';
 import OrderCancelAction from './OrderCancelAction';
@@ -23,11 +24,11 @@ export default function ManagerDashboard({
   const [feedback, setFeedback] = useState(null);
   const [ordersToComplete, setOrdersToComplete] = useState(null);
   const [selectedGroup, setSelectedGroup] = useState('');
-  const isAdmin = currentUser.role === 'admin';
+  const allGroups = canManageAllGroups(currentUser);
   const groupOptions = [...new Set(orders.map((order) => order.group_id))].sort((a, b) => String(a).localeCompare(String(b), 'ja'));
   const visibleOrders = useMemo(() => (
-    isAdmin && selectedGroup ? orders.filter((order) => order.group_id === selectedGroup) : orders
-  ), [isAdmin, orders, selectedGroup]);
+    allGroups && selectedGroup ? orders.filter((order) => order.group_id === selectedGroup) : orders
+  ), [allGroups, orders, selectedGroup]);
 
   const groupedTables = useMemo(() => groupOrdersForHandoff(visibleOrders, quantityDrafts), [visibleOrders, quantityDrafts]);
 
@@ -109,7 +110,7 @@ export default function ManagerDashboard({
   return (
     <section className="screen manager-screen">
       <ScreenIntro
-        eyebrow={isAdmin ? '全グループ 管理者' : `${currentUser.group_id} 担当者`}
+        eyebrow={allGroups ? `全グループ ${currentUser.role === 'chief' ? '主任' : '管理者'}` : `${currentUser.group_id} 担当者`}
         title="注文を取りまとめる"
         description="個数を確認し、店員へ伝えた後にまとめて「伝達済み」にします。"
         action={(
@@ -119,7 +120,7 @@ export default function ManagerDashboard({
         )}
       />
 
-      {isAdmin && (
+      {allGroups && (
         <label className="manager-group-filter">
           <span>取りまとめるグループ</span>
           <select value={selectedGroup} onChange={(event) => setSelectedGroup(event.target.value)} disabled={isCompleting || isCancelling || busyOrderId !== null}>
@@ -183,7 +184,7 @@ export default function ManagerDashboard({
           <div className="manager-handoff-tables">
             {groupedTables.map((table) => (
               <section key={table.key} className="manager-handoff-table" aria-label={`${table.groupId}の注文`}>
-                {isAdmin && <h3>{table.groupId}</h3>}
+                {allGroups && <h3>{table.groupId}</h3>}
                 <div className="manager-handoff-products">
                   {table.products.map((product) => (
                     <details key={product.key} className="manager-product">
