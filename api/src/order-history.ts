@@ -3,9 +3,17 @@ import type { Bindings } from './types.js';
 
 export const ORDER_HISTORY_CONFIRMATION = '注文履歴だけを削除';
 
+// Only clears performed by the notification-aware API advance this revision.
+// Older audit entries must not erase notifications merely on a software update.
+export const NOTIFICATION_HISTORY_REVISION_SQL = `
+  SELECT COALESCE(MAX(id), 0) AS revision FROM audit_logs
+  WHERE action_type = 'ORDER_HISTORY_CLEAR'
+    AND json_extract(metadata_json, '$.notification_history_cleared') = 1
+`;
+
 // An exact snapshot detects inserts, deletions, and edits, including edits made
 // within the same second. It is kept server-side; only its digest reaches the UI.
-const SNAPSHOT_SQL = `
+const ORDERS_SNAPSHOT_SQL = `
   SELECT json_group_array(json_array(
     id, user_id, menu_item_id, quantity, status, manager_memo,
     menu_name_snapshot, menu_size_snapshot, unit_price_snapshot,
@@ -13,6 +21,9 @@ const SNAPSHOT_SQL = `
     created_at, updated_at, order_source, created_by_user_id
   )) FROM (SELECT * FROM orders ORDER BY id)
 `;
+// Include the clear revision so replaying a zero-order clear cannot issue a
+// second notification reset with an otherwise identical empty-order snapshot.
+const SNAPSHOT_SQL = `SELECT json_array(json((${ORDERS_SNAPSHOT_SQL})), (${NOTIFICATION_HISTORY_REVISION_SQL}))`;
 
 type HistorySnapshot = {
   order_count: number;
@@ -49,6 +60,7 @@ export async function clearOrderHistory(env: Bindings, actorId: number, expected
     pending_count: expected.preview.pending_count,
     ordered_count: expected.preview.ordered_count,
     cancelled_count: expected.preview.cancelled_count,
+    notification_history_cleared: true,
   });
   // D1 batch is transactional: a failed receipt, delete, or audit rolls back all
   // changes. The temporary guard is removed within the same batch.
@@ -68,7 +80,11 @@ export async function clearOrderHistory(env: Bindings, actorId: number, expected
       INSERT INTO audit_logs (actor_user_id, action_type, target_type, target_id, metadata_json)
       SELECT ?, 'ORDER_HISTORY_CLEAR', 'order_history', NULL, ? WHERE ${guard}
     `).bind(actorId, metadata, guardHash),
+    env.DB.prepare(NOTIFICATION_HISTORY_REVISION_SQL),
     env.DB.prepare('DELETE FROM oauth_states WHERE state_hash = ?').bind(guardHash),
   ]);
-  return Number((results[1].results[0] as { acquired?: number } | undefined)?.acquired) === 1;
+  if (Number((results[1].results[0] as { acquired?: number } | undefined)?.acquired) !== 1) return null;
+  const revision = Number((results[5].results[0] as { revision?: number } | undefined)?.revision);
+  if (!Number.isSafeInteger(revision) || revision <= 0) throw new Error('Notification clear revision unavailable');
+  return revision;
 }

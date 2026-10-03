@@ -22,7 +22,7 @@ export function useManagerOrders(currentUser, onOrders) {
     revalidateOnFocus: true,
     onSuccess: (payload) => {
       setLastUpdate({ key: userScope, value: new Date() });
-      onOrders?.(payload?.data || [], userScope);
+      onOrders?.(payload?.data || [], userScope, payload?.notification_history_revision);
     },
   });
 

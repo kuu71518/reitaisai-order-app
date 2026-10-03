@@ -10,7 +10,7 @@ async function confirmation(fixture) {
 }
 const clear = (fixture, body, userId = 1, options = {}) => fixture.request(userId, '/api/admin/order-history/clear', { method: 'POST', body, ...options });
 
-test('history clear removes every order state, while preserving participants, roles, menu, sessions, notifications and audit history', async (t) => {
+test('history clear removes every order state and advances notification revision while preserving participants, roles, menu, sessions, push registrations and audits', async (t) => {
   const f = await createFixture(t);
   f.addOrder(); f.addOrder({ userId: 4, status: 'ordered' }); f.addOrder({ status: 'cancelled' });
   f.sqlite.prepare("INSERT INTO audit_logs (actor_user_id, action_type) VALUES (3, 'ORDER_CREATE')").run();
@@ -20,12 +20,14 @@ test('history clear removes every order state, while preserving participants, ro
   const audits = f.rows('audit_logs');
   const response = await clear(f, await confirmation(f));
   assert.equal(response.status, 200);
-  assert.equal((await response.json()).data.deleted_order_count, 3);
+  const cleared = (await response.json()).data;
+  assert.equal(cleared.deleted_order_count, 3);
+  assert.equal(cleared.notification_history_revision, f.rows('audit_logs').at(-1).id);
   assert.deepEqual(f.rows('orders'), []);
   for (const table of tables) assert.deepEqual(f.rows(table), before[table], table);
   assert.deepEqual(f.rows('audit_logs').slice(0, -1), audits);
   assert.equal(f.rows('audit_logs').at(-1).action_type, 'ORDER_HISTORY_CLEAR');
-  assert.deepEqual(JSON.parse(f.rows('audit_logs').at(-1).metadata_json), { deleted_order_count: 3, pending_count: 1, ordered_count: 1, cancelled_count: 1 });
+  assert.deepEqual(JSON.parse(f.rows('audit_logs').at(-1).metadata_json), { deleted_order_count: 3, pending_count: 1, ordered_count: 1, cancelled_count: 1, notification_history_cleared: true });
   assert.equal(f.rows('cleared_order_requests').length, 3);
   assert.deepEqual(f.sqlite.prepare('PRAGMA foreign_key_check').all(), []);
 });
@@ -108,10 +110,62 @@ test('repeating a clear request cannot delete subsequent orders or create a seco
   assert.equal(f.rows('audit_logs').filter((row) => row.action_type === 'ORDER_HISTORY_CLEAR').length, 1);
 });
 
-test('empty history is not deleted or audited', async (t) => {
+test('zero-order clear resets notifications once and refuses a duplicate with the same preview token', async (t) => {
   const f = await createFixture(t);
-  assert.equal((await clear(f, await confirmation(f))).status, 409);
-  assert.equal(f.rows('audit_logs').length, 0);
+  const body = await confirmation(f);
+  const before = f.rows('users');
+  const response = await clear(f, body);
+  assert.equal(response.status, 200);
+  const data = (await response.json()).data;
+  assert.equal(data.deleted_order_count, 0);
+  assert(data.notification_history_revision > 0);
+  assert.equal((await clear(f, body)).status, 409);
+  assert.deepEqual(f.rows('users'), before);
+  assert.equal(f.rows('audit_logs').length, 1);
+  assert.equal(f.rows('cleared_order_requests').length, 0);
+});
+
+test('every notification role receives the same global revision on both polling routes; legacy clears do not advance it', async (t) => {
+  const f = await createFixture(t);
+  f.sqlite.prepare("UPDATE users SET role = 'chief' WHERE id = 5").run();
+  f.sqlite.prepare("INSERT INTO audit_logs (actor_user_id, action_type, metadata_json) VALUES (1, 'ORDER_HISTORY_CLEAR', '{}')").run();
+  for (const path of ['/api/notifications/orders', '/api/manager/orders']) {
+    const body = await (await f.request(2, path)).json();
+    assert.equal(body.notification_history_revision, 0);
+    assert.equal((await f.request(3, path)).status, 403);
+  }
+  f.addOrder();
+  const response = await clear(f, await confirmation(f));
+  const revision = (await response.json()).data.notification_history_revision;
+  for (const userId of [1, 2, 5]) for (const path of ['/api/notifications/orders', '/api/manager/orders']) {
+    const body = await (await f.request(userId, path)).json();
+    assert.equal(body.notification_history_revision, revision);
+    assert.deepEqual(body.data, []);
+    assert.equal(JSON.stringify(body).includes('metadata_json'), false);
+  }
+});
+
+test('a failed audit does not advance the notification revision or consume the empty-history preview', async (t) => {
+  const f = await createFixture(t);
+  const body = await confirmation(f);
+  f.sqlite.exec("CREATE TRIGGER fail_notification_clear BEFORE INSERT ON audit_logs WHEN NEW.action_type = 'ORDER_HISTORY_CLEAR' BEGIN SELECT RAISE(ABORT, 'test failure'); END");
+  assert.equal((await clear(f, body)).status, 500);
+  assert.equal((await (await f.request(2, '/api/notifications/orders')).json()).notification_history_revision, 0);
+  f.sqlite.exec('DROP TRIGGER fail_notification_clear');
+  assert.equal((await clear(f, body)).status, 200);
+});
+
+test('a fresh zero-order preview can request another reset, and a concurrent reset invalidates the atomic guard', async (t) => {
+  const f = await createFixture(t);
+  const body = await confirmation(f);
+  f.activity.beforeBatch = () => {
+    f.activity.beforeBatch = null;
+    f.sqlite.prepare("INSERT INTO audit_logs (actor_user_id, action_type, metadata_json) VALUES (1, 'ORDER_HISTORY_CLEAR', '{\"notification_history_cleared\":true}')").run();
+  };
+  assert.equal((await clear(f, body)).status, 409);
+  const second = await clear(f, await confirmation(f));
+  assert.equal(second.status, 200);
+  assert.equal(f.rows('audit_logs').length, 2);
 });
 
 for (const source of ['self', 'admin']) test(`a delayed ${source} order retry cannot resurrect cleared history; a new request still works`, async (t) => {

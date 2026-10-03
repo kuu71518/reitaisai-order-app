@@ -2,6 +2,7 @@ import { canReceiveOrderNotifications } from './orderAccess.js';
 
 const DATABASE = 'reitaisai-notification-history';
 const STORE = 'notifications';
+const CLEAR_REVISION = 'clear-revision';
 export const HISTORY_LIMIT = 200;
 const MERGE_WINDOW = 10_000;
 
@@ -27,6 +28,11 @@ export function emptyHistory() {
 
 export function unreadNotifications(state) {
   return state.entries.filter((entry) => !entry.readAt).length;
+}
+
+function clearedHistory(state) {
+  return { ...emptyHistory(), initialized: state.initialized || state.entries.length > 0,
+    preferences: { ...state.preferences } };
 }
 
 // This reducer is shared by the page and Service Worker. Keep notification
@@ -91,12 +97,23 @@ export function createNotificationHistory(indexedDB = globalThis.indexedDB) {
     return databasePromise;
   }
 
-  async function change(scope, operation) {
+  async function change(scope, operation, revision = null) {
     const key = `scope:${scope}`;
-    const apply = (active, stored) => operation(active, stored || emptyHistory());
+    const apply = (active, stored, latestRevision) => {
+      if (revision !== null && revision < latestRevision) return { ignored: true };
+      const cleared = revision !== null && revision > latestRevision;
+      const state = stored || emptyHistory();
+      return { ...operation(active, cleared ? clearedHistory(state) : state), cleared };
+    };
     let db;
     try { db = await database(); } catch {
-      const result = apply(memory.get('active'), memory.get(key));
+      const result = apply(memory.get('active'), memory.get(key), memory.get(CLEAR_REVISION) || 0);
+      if (result.cleared) {
+        for (const [storedKey, state] of memory) {
+          if (storedKey.startsWith('scope:')) memory.set(storedKey, clearedHistory(state));
+        }
+        memory.set(CLEAR_REVISION, revision);
+      }
       if (result.state) memory.set(key, result.state);
       if ('active' in result) memory.set('active', result.active);
       return { ...result, persistent: false };
@@ -106,16 +123,32 @@ export function createNotificationHistory(indexedDB = globalThis.indexedDB) {
       const store = transaction.objectStore(STORE);
       const active = store.get('active');
       const stored = store.get(key);
-      let pending = 2;
+      const latestRevision = store.get(CLEAR_REVISION);
+      let pending = 3;
       let result;
       const ready = () => {
         if (--pending) return;
-        result = apply(active.result, stored.result);
+        result = apply(active.result, stored.result, latestRevision.result || 0);
+        if (result.cleared) {
+          store.put(revision, CLEAR_REVISION);
+          // Reset every account/role scope in this browser in the same transaction,
+          // including accounts that are not currently open. Keep alert preferences.
+          const cursor = store.openCursor();
+          cursor.onsuccess = () => {
+            const item = cursor.result;
+            if (!item) return;
+            if (typeof item.key === 'string' && item.key.startsWith('scope:')) {
+              item.update(item.key === key && result.state ? result.state : clearedHistory(item.value));
+            }
+            item.continue();
+          };
+        }
         if (result.state) store.put(result.state, key);
         if ('active' in result) store.put(result.active, 'active');
       };
       active.onsuccess = ready;
       stored.onsuccess = ready;
+      latestRevision.onsuccess = ready;
       transaction.oncomplete = () => resolve({ ...result, persistent: true });
       transaction.onerror = transaction.onabort = () => reject(new Error('Notification history could not be saved'));
     });
@@ -125,7 +158,12 @@ export function createNotificationHistory(indexedDB = globalThis.indexedDB) {
     activate: (scope) => change(scope, (_active, state) => ({ active: scope, state })),
     deactivate: (scope = null) => change(scope, (active) => scope === null || active === scope ? { active: null } : {}),
     read: (scope) => change(scope, (_active, state) => ({ state })),
-    update: (scope, action) => change(scope, (active, state) => active === scope ? updateHistory(state, action) : {}),
+    update: (scope, action) => change(scope, (active, state) => active === scope ? updateHistory(state, action) : {},
+      action.type === 'orders' && Number.isSafeInteger(action.revision) && action.revision >= 0 ? action.revision : null),
+    clear(revision) {
+      if (!Number.isSafeInteger(revision) || revision <= 0) return Promise.reject(new Error('Invalid notification clear revision'));
+      return change(null, () => ({}), revision);
+    },
     async receivePush(now = Date.now()) {
       // Read the active account and write its receipt in ONE transaction. A
       // concurrent logout/account switch must not attach it to the next user.
@@ -160,3 +198,17 @@ export function createNotificationHistory(indexedDB = globalThis.indexedDB) {
 }
 
 export const notificationHistory = createNotificationHistory();
+
+export async function clearNotificationHistory(revision) {
+  const result = await notificationHistory.clear(revision);
+  if (result.ignored) return result;
+  // Same-document events reach the deleting administrator immediately. Other
+  // tabs share IndexedDB and receive the revision through BroadcastChannel.
+  globalThis.dispatchEvent?.(new CustomEvent('reitaisai:notification-history-cleared', { detail: { revision } }));
+  if (typeof BroadcastChannel === 'function') {
+    const channel = new BroadcastChannel('reitaisai-notification-history');
+    channel.postMessage({ type: 'NOTIFICATION_HISTORY_CLEARED', revision });
+    channel.close();
+  }
+  return result;
+}

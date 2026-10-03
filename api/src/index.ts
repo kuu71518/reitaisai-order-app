@@ -19,7 +19,7 @@ import {
   timingSafeEqual,
 } from './security.js';
 import type { AppEnv, AuthContext, Bindings, SessionUser, UserRole } from './types.js';
-import { clearOrderHistory, ORDER_HISTORY_CONFIRMATION, readOrderHistory } from './order-history.ts';
+import { clearOrderHistory, NOTIFICATION_HISTORY_REVISION_SQL, ORDER_HISTORY_CONFIRMATION, readOrderHistory } from './order-history.ts';
 import { allowedPushEndpoint, getPushConfig, notifyOrder } from './push.ts';
 import { CANCEL_SNAPSHOT_SQL, canAccessCancellation, cancelOrder, readCancellationOrder, withCancelTokens } from './order-cancellation.ts';
 import { CASH_HISTORY_SNAPSHOT_SQL, readAccounting, readGroupAccountingTotal, readCashReceipt, writeCashReceipt } from './cash-receipts.ts';
@@ -581,12 +581,12 @@ app.get('/api/notifications/orders', async (c) => {
   const allGroups = auth.user.role === 'admin' || auth.user.role === 'chief';
   // This lightweight notification endpoint exposes IDs only. Handoff details
   // are available separately, with managers restricted to their assigned group.
-  const { results } = await c.env.DB.prepare(`
+  const [orders, revision] = await c.env.DB.batch<Record<string, unknown>>([c.env.DB.prepare(`
     SELECT o.id FROM orders o JOIN users u ON u.id = o.user_id
     WHERE o.status = 'pending' AND (? = 1 OR u.group_id = ?)
     ORDER BY o.created_at, o.id
-  `).bind(allGroups ? 1 : 0, auth.user.group_id).all<{ id: number }>();
-  return c.json({ success: true, data: results });
+  `).bind(allGroups ? 1 : 0, auth.user.group_id), c.env.DB.prepare(NOTIFICATION_HISTORY_REVISION_SQL)]);
+  return c.json({ success: true, data: orders.results, notification_history_revision: Number(revision.results[0]?.revision) });
 });
 
 app.post('/api/notifications/subscriptions', async (c) => {
@@ -723,10 +723,11 @@ app.get('/api/manager/orders', async (c) => {
     ORDER BY o.created_at, o.id
   `;
   const statement = c.env.DB.prepare(sql);
-  const { results } = allGroups
-    ? await statement.bind(requestedStatus).all()
-    : await statement.bind(requestedStatus, auth.user.group_id).all();
-  return c.json({ success: true, data: await withCancelTokens(results) });
+  const [orders, revision] = await c.env.DB.batch<Record<string, unknown>>([
+    allGroups ? statement.bind(requestedStatus) : statement.bind(requestedStatus, auth.user.group_id),
+    c.env.DB.prepare(NOTIFICATION_HISTORY_REVISION_SQL),
+  ]);
+  return c.json({ success: true, data: await withCancelTokens(orders.results), notification_history_revision: Number(revision.results[0]?.revision) });
 });
 
 async function handleOrderCancellation(c: Context<AppEnv>) {
@@ -899,14 +900,11 @@ app.post('/api/admin/order-history/clear', async (c) => {
   if (body.snapshot_token !== expected.preview.snapshot_token) {
     return fail(c, 409, '確認後に注文が変わりました。削除済みの場合もあります。最新の件数を確認してください。', 'ORDER_HISTORY_PREVIEW_STALE');
   }
-  if (expected.preview.order_count === 0) {
-    return fail(c, 409, '削除する注文履歴はありません。', 'ORDER_HISTORY_EMPTY');
-  }
   const cleared = await clearOrderHistory(c.env, c.get('auth').user.id, expected);
-  if (!cleared) {
+  if (cleared === null) {
     return fail(c, 409, '確認後に注文が変わりました。最新の件数を確認してください。', 'ORDER_HISTORY_PREVIEW_STALE');
   }
-  return c.json({ success: true, data: { deleted_order_count: expected.preview.order_count } });
+  return c.json({ success: true, data: { deleted_order_count: expected.preview.order_count, notification_history_revision: cleared } });
 });
 
 app.get('/api/admin/data-reset/preview', async (c) => {

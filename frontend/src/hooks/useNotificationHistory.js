@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { emptyHistory, notificationHistory, notificationOrderKeys, notificationScope, unreadNotifications } from '../lib/notificationHistory.js';
+import { clearNotificationHistory, emptyHistory, notificationHistory, notificationOrderKeys, notificationScope, unreadNotifications } from '../lib/notificationHistory.js';
 import { playNotificationAlert, prepareNotificationSound } from '../lib/notificationAlerts.js';
 
 export function useNotificationHistory(user, onNewOrders, authReady) {
@@ -51,12 +51,18 @@ export function useNotificationHistory(user, onNewOrders, authReady) {
   useEffect(() => {
     const receive = (event) => {
       if (event.data?.type === 'NOTIFICATION_HISTORY_UPDATED' && event.data.scope === scopeRef.current) void refresh();
+      if (event.data?.type === 'NOTIFICATION_HISTORY_CLEARED') {
+        void notificationHistory.clear(event.data.revision).then(refresh).catch(() => {
+          setSnapshot((current) => ({ ...current, error: '通知履歴を削除できませんでした。アプリを開き直してお試しください。' }));
+        });
+      }
     };
     const visible = () => { if (document.visibilityState === 'visible') void refresh(); };
     const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('reitaisai-notification-history') : null;
     channel?.addEventListener('message', receive);
     navigator.serviceWorker?.addEventListener('message', receive);
     document.addEventListener('visibilitychange', visible);
+    window.addEventListener('reitaisai:notification-history-cleared', refresh);
     const prepare = () => { if (scopeRef.current) void prepareNotificationSound(); };
     document.addEventListener('pointerdown', prepare);
     document.addEventListener('keydown', prepare);
@@ -64,6 +70,7 @@ export function useNotificationHistory(user, onNewOrders, authReady) {
       channel?.close();
       navigator.serviceWorker?.removeEventListener('message', receive);
       document.removeEventListener('visibilitychange', visible);
+      window.removeEventListener('reitaisai:notification-history-cleared', refresh);
       document.removeEventListener('pointerdown', prepare);
       document.removeEventListener('keydown', prepare);
     };
@@ -76,16 +83,21 @@ export function useNotificationHistory(user, onNewOrders, authReady) {
     channel.close();
   }, []);
 
-  const receiveOrders = useCallback(async (orders, requestOwner) => {
+  const receiveOrders = useCallback(async (orders, requestOwner, revision) => {
     if (requestOwner !== owner || ownerRef.current !== owner) return;
     const scope = await readyRef.current;
     if (!scope || ownerRef.current !== owner) return;
     try {
       const ids = await notificationOrderKeys(scope, orders);
       if (ownerRef.current !== owner) return;
-      const result = await notificationHistory.update(scope, { type: 'orders', ids, now: Date.now(), id: crypto.randomUUID() });
+      // Older/malformed responses cannot advance a reset. Treat a legacy response
+      // as revision zero so it is ignored after a newer clear has been observed.
+      const observedRevision = Number.isSafeInteger(revision) && revision >= 0 ? revision : 0;
+      const result = await notificationHistory.update(scope, { type: 'orders', ids, revision: observedRevision, now: Date.now(), id: crypto.randomUUID() });
       if (ownerRef.current !== owner || !result.state) return;
       accept(result, owner);
+      if (result.cleared) await clearNotificationHistory(observedRevision);
+      if (ownerRef.current !== owner) return;
       if (result.newCount) {
         broadcast(scope);
         callbackRef.current?.(result.newCount);

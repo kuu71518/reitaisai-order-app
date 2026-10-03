@@ -110,3 +110,56 @@ test('authentication as a member or guest can clear a previous browser account b
   assert.equal(await history.receivePush(120_000), null);
   assert.equal(unreadNotifications((await history.read('prior-chief')).state), 1);
 });
+
+test('an administrator clear removes read and unread receipts in every stored scope while retaining alert preferences and the active account', async () => {
+  const history = createNotificationHistory(null);
+  await history.activate('manager');
+  await history.update('manager', { type: 'push', id: 'old-manager', now: 100_000 });
+  await history.update('manager', { type: 'preferences', sound: false, vibration: true });
+  await history.activate('chief');
+  await history.update('chief', { type: 'push', id: 'old-chief', now: 100_000 });
+  await history.update('chief', { type: 'read', ids: 'all', now: 110_000 });
+  assert.equal((await history.clear(12)).cleared, true);
+  for (const scope of ['manager', 'chief']) {
+    const { state } = await history.read(scope);
+    assert.deepEqual(state.entries, []);
+    assert.deepEqual(state.observed, []);
+    assert.equal(unreadNotifications(state), 0);
+  }
+  assert.deepEqual((await history.read('manager')).state.preferences, { sound: false, vibration: true });
+  assert.equal((await history.receivePush(130_000)).scope, 'chief');
+});
+
+test('another device observes the server revision on its next poll and still alerts for orders placed after that clear', async () => {
+  const history = createNotificationHistory(null);
+  await history.activate('manager');
+  await history.update('manager', { type: 'orders', ids: ['old'], revision: 0, now: 100_000, id: 'baseline' });
+  await history.update('manager', { type: 'push', now: 120_000, id: 'old-receipt' });
+  const result = await history.update('manager', { type: 'orders', ids: ['new-after-clear'], revision: 8, now: 150_000, id: 'new-receipt' });
+  assert.equal(result.cleared, true);
+  assert.equal(result.newCount, 1);
+  assert.equal(result.alert, true);
+  assert.deepEqual(result.state.entries.map((row) => row.id), ['new-receipt']);
+  assert.equal(unreadNotifications(result.state), 1);
+});
+
+test('the same or an older clear cannot remove notifications received after a completed reset', async () => {
+  const history = createNotificationHistory(null);
+  await history.activate('chief');
+  await history.update('chief', { type: 'orders', ids: [], revision: 0, now: 100_000, id: 'baseline' });
+  await history.clear(10);
+  await history.update('chief', { type: 'orders', ids: ['new'], revision: 10, now: 120_000, id: 'new-receipt' });
+  assert.equal((await history.clear(10)).cleared, false);
+  assert.equal((await history.clear(9)).ignored, true);
+  assert.equal((await history.update('chief', { type: 'orders', ids: ['deleted'], revision: 0, now: 140_000, id: 'stale-response' })).ignored, true);
+  assert.deepEqual((await history.read('chief')).state.entries.map((row) => row.id), ['new-receipt']);
+});
+
+test('a first visit after a previous global clear still establishes a quiet baseline, and invalid revisions cannot clear history', async () => {
+  const history = createNotificationHistory(null);
+  await history.activate('first-visit');
+  const result = await history.update('first-visit', { type: 'orders', ids: ['existing'], revision: 4, now: 100_000, id: 'first' });
+  assert.equal(result.newCount, 0);
+  for (const revision of [-1, 0, 1.5, '4', null, Number.MAX_SAFE_INTEGER + 1]) await assert.rejects(history.clear(revision));
+  assert.deepEqual((await history.read('first-visit')).state.observed, ['existing']);
+});
