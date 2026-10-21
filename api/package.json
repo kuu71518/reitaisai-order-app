@@ -28,11 +28,17 @@
     "deploy:production": "npm run check:deploy-config:production && wrangler deploy --minify --env production --config wrangler.deploy.toml"
   },
   "dependencies": {
-    "hono": "4.12.30"
+    "hono": "4.13.11"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260714.1",
     "typescript": "5.9.3",
     "wrangler": "4.110.0"
+  },
+  "overrides": {
+    "miniflare": {
+      "undici": "7.29.1",
+      "sharp": "0.35.5"
+    }
   }
 }
